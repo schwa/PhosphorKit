@@ -41,6 +41,19 @@ public struct ParsedPhosphorSource: Hashable, Sendable {
         self = PhosphorFrontMatter.parse(source)
     }
 
+    /// Builds a parsed source from a ``PhosphorDocument`` (the JSON `.phosphor`
+    /// format), where the configuration is already split out from the source.
+    /// Runs the same validation as the embedded-front-matter path.
+    public init(document: PhosphorDocument) {
+        self.init(
+            originalSource: document.source,
+            body: document.source,
+            configuration: document.configuration,
+            diagnostics: validate(document.configuration),
+            hasFrontMatter: true
+        )
+    }
+
     /// `true` if the source has a front-matter block (parsed or not).
     public var hasFrontMatter: Bool
 }

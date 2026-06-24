@@ -18,7 +18,7 @@ import SwiftUI
 /// `Plasma.phosphor` (falling back to `Plasma.metal`). The source is read in
 /// `init`; a missing resource is a programmer error and traps.
 public struct PhosphorView: View {
-    private let source: String
+    private let parsed: ParsedPhosphorSource
 
     @State private var runtime = PhosphorRuntime()
     @State private var viewSize: CGSize = .zero
@@ -29,9 +29,16 @@ public struct PhosphorView: View {
     @State private var playbackClock = PlaybackClock()
 
     /// Renders an in-memory shader source directly, for callers that already
-    /// hold the source string (or previews).
+    /// hold the source string (or previews). The source may carry an embedded
+    /// `/* phosphor:environment ... */` front-matter block (legacy `.metal`).
     public init(source: String) {
-        self.source = source
+        self.parsed = ParsedPhosphorSource(source: source)
+    }
+
+    /// Renders a parsed/decoded document directly (e.g. the JSON `.phosphor`
+    /// format, via `ParsedPhosphorSource(document:)`).
+    public init(parsed: ParsedPhosphorSource) {
+        self.parsed = parsed
     }
 
     public var body: some View {
@@ -48,7 +55,7 @@ public struct PhosphorView: View {
         .task {
             guard !loaded else { return }
             loaded = true
-            runtime.reload(parsed: ParsedPhosphorSource(source: source), assets: [:], audioCapture: nil)
+            runtime.reload(parsed: parsed, assets: [:], audioCapture: nil)
         }
     }
 
@@ -126,24 +133,38 @@ extension PhosphorView {
     /// `Plasma.phosphor` (falling back to `Plasma.metal`). The source is read
     /// eagerly; a missing resource is a programmer error and traps.
     public init(named name: String, bundle: Bundle = .main) {
-        guard let source = Self.loadSource(named: name, bundle: bundle) else {
+        guard let url = Self.resolveURL(named: name, bundle: bundle) else {
             fatalError("PhosphorView: no shader resource named '\(name)' found in \(bundle.bundlePath)")
         }
-        self.init(source: source)
+        guard let data = try? Data(contentsOf: url) else {
+            fatalError("PhosphorView: failed to read shader resource at \(url.path)")
+        }
+
+        // `.phosphor` is the JSON document format (config split from source);
+        // anything else (notably `.metal`) is raw source with optional embedded
+        // front-matter.
+        if url.pathExtension == "phosphor" {
+            guard let document = try? PhosphorDocument(jsonData: data) else {
+                fatalError("PhosphorView: '\(url.lastPathComponent)' is not a valid .phosphor JSON document")
+            }
+            self.init(parsed: ParsedPhosphorSource(document: document))
+        } else {
+            let source = String(decoding: data, as: UTF8.self)
+            self.init(source: source)
+        }
     }
 
-    /// Loads the shader source for `name` from `bundle`, trying the literal
-    /// name first then the `.phosphor` / `.metal` extensions.
-    static func loadSource(named name: String, bundle: Bundle) -> String? {
+    /// Resolves the URL for `name` in `bundle`, trying the literal name first
+    /// then the `.phosphor` / `.metal` extensions.
+    static func resolveURL(named name: String, bundle: Bundle) -> URL? {
         let candidates: [(String, String?)] = [
             (name, nil),
             ((name as NSString).deletingPathExtension, "phosphor"),
             ((name as NSString).deletingPathExtension, "metal")
         ]
         for (resource, ext) in candidates {
-            if let url = bundle.url(forResource: resource, withExtension: ext),
-               let source = try? String(contentsOf: url, encoding: .utf8) {
-                return source
+            if let url = bundle.url(forResource: resource, withExtension: ext) {
+                return url
             }
         }
         return nil
