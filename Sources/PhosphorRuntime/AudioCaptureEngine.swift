@@ -115,9 +115,9 @@ public final class AudioCaptureEngine {
         storage.reset()
 
         inputNode.removeTap(onBus: 0)
-        installNonisolatedTap(on: inputNode, format: format, storage: storage)
 
         do {
+            try installNonisolatedTap(on: inputNode, format: format, storage: storage)
             try engine.start()
             isRunning = true
             storage.isRunning = true
@@ -144,11 +144,11 @@ public final class AudioCaptureEngine {
 /// Installs the AVAudioEngine tap block as a free, fully-nonisolated function
 /// so the closure created here does NOT inherit `@MainActor` isolation from
 /// ``AudioCaptureEngine``. The audio engine invokes the tap block on a
-/// real-time audio thread; if the closure were main-actor-isolated, Swift
-/// Concurrency's executor-check would fire and crash the process.
-// TODO: switch to the macOS 27 variant once it's exposed in Swift.
-private func installNonisolatedTap(on inputNode: AVAudioInputNode, format: AVAudioFormat, storage: AudioRingStorage) {
-    inputNode.installTap(onBus: 0, bufferSize: 1_024, format: format) { buffer, _ in
+/// real-time audio thread; the `@Sendable` `tapProvider` closure handed to
+/// `installAudioTap` is free of any actor isolation, so Swift Concurrency's
+/// executor-check never fires.
+private func installNonisolatedTap(on inputNode: AVAudioInputNode, format: AVAudioFormat, storage: AudioRingStorage) throws {
+    try inputNode.installAudioTap(onBus: 0, bufferSize: 1_024, format: format) { buffer, _ in
         storage.append(buffer: buffer)
     }
 }
@@ -195,11 +195,10 @@ private final class AudioRingStorage: @unchecked Sendable {
         }
     }
 
-    func append(buffer: AVAudioPCMBuffer) {
-        guard let channelData = buffer.floatChannelData else { return }
+    func append(buffer: AVReadOnlyAudioPCMBuffer) {
         let frameCount = Int(buffer.frameLength)
         guard frameCount > 0 else { return }
-        let samples = channelData[0]
+        guard case .float(let samples) = buffer.channelData(0) else { return }
         let base = ring.baseAddress!
 
         lock.lock()
@@ -208,7 +207,9 @@ private final class AudioRingStorage: @unchecked Sendable {
         while src < frameCount {
             let remaining = frameCount - src
             let writable = min(remaining, sampleCount - head)
-            base.advanced(by: head).update(from: samples + src, count: writable)
+            for i in 0..<writable {
+                base[head + i] = samples[src + i]
+            }
             head = (head + writable) % sampleCount
             src += writable
         }
