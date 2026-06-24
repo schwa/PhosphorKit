@@ -1,4 +1,5 @@
 import Foundation
+import Metal
 import MetalSprockets
 import MetalSprocketsUI
 import PhosphorCompile
@@ -40,7 +41,7 @@ public struct PhosphorView: View {
             if viewSize.width > 0, viewSize.height > 0 {
                 surface
             } else {
-                Color.black
+                Color.clear
             }
         }
         .onGeometryChange(for: CGSize.self, of: \.size) { viewSize = $0 }
@@ -64,6 +65,7 @@ public struct PhosphorView: View {
                 playbackClock.commit(wallClock: wallClock(from: context))
             }
         }
+        .metalClearColor(MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0))
         .onContinuousHover { phase in
             if case .active(let point) = phase {
                 mousePosition = pixelCoordinate(from: point)
@@ -198,16 +200,16 @@ extension PhosphorView {
         float hue = fract(angle / 6.2831853 + 0.5 + 0.10 * t + 0.25 * length(p));
         float3 tri = hsv(hue, 0.85, 1.0);
 
-        // Subtly shifting dark backdrop so it's not flat black.
-        float3 bg = hsv(fract(0.6 + 0.03 * t), 0.5, 0.12);
-
         // Glowing outline that pulses.
         float edge = exp(-abs(d) * 18.0) * (0.6 + 0.4 * sin(t * 2.0));
         float3 glow = hsv(fract(hue + 0.5), 0.9, 1.0) * edge;
 
-        float3 col = mix(bg, tri, fill) + glow;
+        // Transparent background: coverage = the triangle fill plus its glow.
+        float alpha = clamp(fill + edge, 0.0, 1.0);
+        float3 col = tri * fill + glow;
         col = col / (1.0 + col);
-        uniforms.textures.image.write(float4(col, 1.0), gid);
+        // Premultiplied alpha so the compositor blends the edges correctly.
+        uniforms.textures.image.write(float4(col, alpha), gid);
     }
     """
     return PhosphorView(source: source)
