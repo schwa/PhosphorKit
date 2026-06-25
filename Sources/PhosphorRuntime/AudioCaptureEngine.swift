@@ -144,12 +144,21 @@ public final class AudioCaptureEngine {
 /// Installs the AVAudioEngine tap block as a free, fully-nonisolated function
 /// so the closure created here does NOT inherit `@MainActor` isolation from
 /// ``AudioCaptureEngine``. The audio engine invokes the tap block on a
-/// real-time audio thread; the `@Sendable` `tapProvider` closure handed to
-/// `installAudioTap` is free of any actor isolation, so Swift Concurrency's
-/// executor-check never fires.
+/// real-time audio thread; if the closure were main-actor-isolated, Swift
+/// Concurrency's executor-check would fire and crash the process.
+///
+/// On macOS 27+ the `@Sendable` `tapProvider` closure handed to
+/// `installAudioTap` is free of any actor isolation, so the executor-check
+/// never fires. On macOS 26 we fall back to the legacy `installTap`.
 private func installNonisolatedTap(on inputNode: AVAudioInputNode, format: AVAudioFormat, storage: AudioRingStorage) throws {
-    try inputNode.installAudioTap(onBus: 0, bufferSize: 1_024, format: format) { buffer, _ in
-        storage.append(buffer: buffer)
+    if #available(macOS 27, iOS 27, visionOS 27, *) {
+        try inputNode.installAudioTap(onBus: 0, bufferSize: 1_024, format: format) { buffer, _ in
+            storage.append(buffer: buffer)
+        }
+    } else {
+        inputNode.installTap(onBus: 0, bufferSize: 1_024, format: format) { buffer, _ in
+            storage.append(buffer: buffer)
+        }
     }
 }
 
@@ -195,12 +204,12 @@ private final class AudioRingStorage: @unchecked Sendable {
         }
     }
 
+    @available(macOS 27, iOS 27, visionOS 27, *)
     func append(buffer: AVReadOnlyAudioPCMBuffer) {
         let frameCount = Int(buffer.frameLength)
         guard frameCount > 0 else { return }
         guard case .float(let samples) = buffer.channelData(0) else { return }
         let base = ring.baseAddress!
-
         lock.lock()
         defer { lock.unlock() }
         var src = 0
@@ -210,6 +219,24 @@ private final class AudioRingStorage: @unchecked Sendable {
             for i in 0..<writable {
                 base[head + i] = samples[src + i]
             }
+            head = (head + writable) % sampleCount
+            src += writable
+        }
+    }
+
+    func append(buffer: AVAudioPCMBuffer) {
+        guard let channelData = buffer.floatChannelData else { return }
+        let frameCount = Int(buffer.frameLength)
+        guard frameCount > 0 else { return }
+        let samples = channelData[0]
+        let base = ring.baseAddress!
+        lock.lock()
+        defer { lock.unlock() }
+        var src = 0
+        while src < frameCount {
+            let remaining = frameCount - src
+            let writable = min(remaining, sampleCount - head)
+            base.advanced(by: head).update(from: samples + src, count: writable)
             head = (head + writable) % sampleCount
             src += writable
         }

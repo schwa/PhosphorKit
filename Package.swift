@@ -5,9 +5,9 @@ import PackageDescription
 let package = Package(
     name: "PhosphorKit",
     platforms: [
-        .iOS(.v27),
-        .macOS(.v27),
-        .visionOS(.v27)
+        .iOS(.v26),
+        .macOS(.v26),
+        .visionOS(.v26)
     ],
     products: [
         .library(name: "PhosphorModel", targets: ["PhosphorModel"]),
