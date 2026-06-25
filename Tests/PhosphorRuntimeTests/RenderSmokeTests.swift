@@ -1,6 +1,5 @@
 import Foundation
 import Metal
-import MetalSprockets
 @testable import PhosphorCompile
 import PhosphorModel
 @testable import PhosphorRuntime
@@ -63,16 +62,31 @@ struct RenderSmokeTests {
             resolution: SIMD2<Float>(Float(size.width), Float(size.height))
         )
 
-        let element = PhosphorPipeline(
-            runtime: runtime,
-            uniforms: uniforms,
-            userUniformValues: [:],
-            drawableSize: size
+        // Offscreen target standing in for the drawable.
+        let targetDescriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .bgra8Unorm,
+            width: Int(size.width),
+            height: Int(size.height),
+            mipmapped: false
         )
+        targetDescriptor.usage = [.renderTarget, .shaderRead]
+        targetDescriptor.storageMode = .private
+        let target = try #require(device.makeTexture(descriptor: targetDescriptor))
 
-        let renderer = try OffscreenRenderer(size: size)
-        let rendering = try renderer.render(element)
-        #expect(rendering.texture.width == Int(size.width))
-        #expect(rendering.texture.height == Int(size.height))
+        let renderer = PhosphorRenderer(device: device)
+        let queue = try #require(device.makeCommandQueue())
+        let commandBuffer = try #require(queue.makeCommandBuffer())
+        try renderer.render(
+            runtime: runtime,
+            into: commandBuffer,
+            targetTexture: target,
+            drawableSize: size,
+            builtin: uniforms
+        )
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+        #expect(commandBuffer.error == nil, "\(name) frame error: \(String(describing: commandBuffer.error))")
+        #expect(target.width == Int(size.width))
+        #expect(target.height == Int(size.height))
     }
 }

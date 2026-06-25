@@ -13,7 +13,7 @@ Phosphor shaders. The Phosphor app builds its editor on top of it.
   `.phosphor` files.
 - **PhosphorCompile** — tree-sitter parsing, front-matter handling, source
   assembly, and Metal compilation. Owns `Phosphor.h`.
-- **PhosphorRuntime** — the live render pipeline (MetalSprockets), audio
+- **PhosphorRuntime** — the live render pipeline (raw Metal), audio
   capture, and the reusable `PhosphorView`.
 
 ## PhosphorView
@@ -45,6 +45,5 @@ swift test
 
 ## Requirements
 
-- macOS 27 / iOS 27 / visionOS 27
+- macOS 26 / iOS 26 / visionOS 26
 
-Built on [MetalSprockets](https://github.com/schwa/MetalSprockets).

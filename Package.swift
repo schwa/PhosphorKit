@@ -15,8 +15,6 @@ let package = Package(
         .library(name: "PhosphorRuntime", targets: ["PhosphorRuntime"])
     ],
     dependencies: [
-        .package(url: "https://github.com/schwa/MetalSprockets", from: "0.1.10"),
-        .package(url: "https://github.com/schwa/MetalSprocketsAddOns", from: "0.1.11"),
         .package(url: "https://github.com/LebJe/TOMLKit", from: "0.6.0"),
         .package(url: "https://github.com/tree-sitter/swift-tree-sitter", from: "0.25.0"),
         .package(url: "https://github.com/tree-sitter/tree-sitter-cpp", branch: "master"),
@@ -52,16 +50,16 @@ let package = Package(
                 .enableUpcomingFeature("ApproachableConcurrency")
             ]
         ),
-        // Live rendering pipeline + audio capture.
+        // Live rendering pipeline + audio capture. Raw Metal, no MetalSprockets:
+        // PhosphorKit is the standalone embeddable product.
         .target(
             name: "PhosphorRuntime",
             dependencies: [
                 "PhosphorModel",
-                "PhosphorCompile",
-                .product(name: "MetalSprockets", package: "MetalSprockets"),
-                .product(name: "MetalSprocketsUI", package: "MetalSprockets"),
-                .product(name: "MetalSprocketsSupport", package: "MetalSprockets"),
-                .product(name: "MetalSprocketsAddOns", package: "MetalSprocketsAddOns")
+                "PhosphorCompile"
+            ],
+            resources: [
+                .process("Resources/Billboard.metal")
             ],
             swiftSettings: [
                 .enableUpcomingFeature("ApproachableConcurrency")

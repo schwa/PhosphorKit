@@ -1,7 +1,6 @@
 import Foundation
 import Metal
-import MetalSprockets
-import MetalSprocketsUI
+import MetalKit
 import PhosphorCompile
 import PhosphorModel
 import SwiftUI
@@ -17,6 +16,10 @@ import SwiftUI
 /// `.phosphor` extension is implied, so `named: "Plasma"` resolves
 /// `Plasma.phosphor` (falling back to `Plasma.metal`). The source is read in
 /// `init`; a missing resource is a programmer error and traps.
+///
+/// Rendering is raw Metal hosted in an `MTKView` (no MetalSprockets), so an app
+/// can embed a `.phosphor` file, link only PhosphorKit, and call
+/// `PhosphorView(named:)`.
 public struct PhosphorView: View {
     private let parsed: ParsedPhosphorSource
 
@@ -26,7 +29,6 @@ public struct PhosphorView: View {
     @State private var mousePosition: SIMD2<Float> = .zero
     @State private var mouseButtons: UInt32 = 0
     @State private var mouseClickOrigin: SIMD2<Float> = .zero
-    @State private var playbackClock = PlaybackClock()
 
     /// Renders an in-memory shader source directly, for callers that already
     /// hold the source string (or previews). The source may carry an embedded
@@ -59,20 +61,11 @@ public struct PhosphorView: View {
         }
     }
 
-    /// The Metal render surface plus its mouse-tracking gestures and playback
-    /// clock.
+    /// The Metal render surface plus its mouse-tracking gestures.
     private var surface: some View {
-        RenderView { context, drawableSize in
-            PhosphorPipeline(
-                runtime: runtime,
-                uniforms: buildUniforms(context: context, drawableSize: drawableSize),
-                drawableSize: drawableSize
-            )
-            .onWorkloadEnter { _ in
-                playbackClock.commit(wallClock: wallClock(from: context))
-            }
+        MetalRenderView(runtime: runtime) { drawableSize in
+            buildUniforms(drawableSize: drawableSize)
         }
-        .metalClearColor(MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0))
         .onContinuousHover { phase in
             if case .active(let point) = phase {
                 mousePosition = pixelCoordinate(from: point)
@@ -93,24 +86,12 @@ public struct PhosphorView: View {
         )
     }
 
-    private func buildUniforms(context: RenderViewContext, drawableSize: CGSize) -> BuiltinUniforms {
-        let sample = playbackClock.kernelSample(wallClock: wallClock(from: context))
-        return BuiltinUniforms(
-            time: sample.time,
-            timeDelta: sample.delta,
-            frame: sample.frame,
+    private func buildUniforms(drawableSize: CGSize) -> BuiltinUniforms {
+        BuiltinUniforms(
             resolution: SIMD2<Float>(Float(drawableSize.width), Float(drawableSize.height)),
             mouse: mousePosition,
             mouseButtons: mouseButtons,
             mouseClickOrigin: mouseClickOrigin
-        )
-    }
-
-    private func wallClock(from context: RenderViewContext) -> PlaybackClock.WallClock {
-        PlaybackClock.WallClock(
-            time: context.frameUniforms.time,
-            frame: context.frameUniforms.index,
-            delta: Float(context.frameUniforms.deltaTime)
         )
     }
 
@@ -125,6 +106,114 @@ public struct PhosphorView: View {
         return SIMD2<Float>(Float(point.x) * scaleX, Float(point.y) * scaleY)
     }
 }
+
+// MARK: - MTKView host
+
+/// SwiftUI wrapper around an `MTKView` that drives a ``PhosphorRenderer`` once
+/// per frame. The `makeUniforms` closure supplies the per-frame builtin
+/// uniforms (resolution, mouse, etc.); the coordinator owns the playback clock
+/// and frame counter.
+private struct MetalRenderView {
+    let runtime: PhosphorRuntime
+    let makeUniforms: (CGSize) -> BuiltinUniforms
+
+    @MainActor
+    func makeCoordinator() -> Coordinator {
+        Coordinator(runtime: runtime, makeUniforms: makeUniforms)
+    }
+
+    @MainActor
+    func makeMTKView(_ coordinator: Coordinator) -> MTKView {
+        let view = MTKView(frame: .zero, device: runtime.device)
+        view.delegate = coordinator
+        view.colorPixelFormat = .bgra8Unorm
+        view.framebufferOnly = false
+        view.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+        view.isPaused = false
+        view.enableSetNeedsDisplay = false
+        #if os(macOS)
+        view.layer?.isOpaque = false
+        #else
+        view.isOpaque = false
+        #endif
+        return view
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, MTKViewDelegate {
+        private let runtime: PhosphorRuntime
+        private let makeUniforms: (CGSize) -> BuiltinUniforms
+        private let renderer: PhosphorRenderer
+        private let commandQueue: MTLCommandQueue?
+
+        private var playbackClock = PlaybackClock()
+        private var frameIndex: UInt32 = 0
+        private var lastTimestamp: CFTimeInterval?
+        private let startTimestamp: CFTimeInterval = CACurrentMediaTime()
+
+        init(runtime: PhosphorRuntime, makeUniforms: @escaping (CGSize) -> BuiltinUniforms) {
+            self.runtime = runtime
+            self.makeUniforms = makeUniforms
+            self.renderer = PhosphorRenderer(device: runtime.device)
+            self.commandQueue = runtime.device.makeCommandQueue()
+        }
+
+        func mtkView(_: MTKView, drawableSizeWillChange _: CGSize) {}
+
+        func draw(in view: MTKView) {
+            guard let drawable = view.currentDrawable,
+                  let commandQueue,
+                  let commandBuffer = commandQueue.makeCommandBuffer() else {
+                return
+            }
+            let drawableSize = view.drawableSize
+            guard drawableSize.width > 0, drawableSize.height > 0 else { return }
+
+            // Free-running wall clock; the playback clock applies pause/reset.
+            let now = CACurrentMediaTime()
+            let wallTime = Float(now - startTimestamp)
+            let delta = Float(now - (lastTimestamp ?? now))
+            lastTimestamp = now
+            let wall = PlaybackClock.WallClock(time: wallTime, frame: frameIndex, delta: delta)
+            let sample = playbackClock.kernelSample(wallClock: wall)
+            playbackClock.commit(wallClock: wall)
+
+            var uniforms = makeUniforms(drawableSize)
+            uniforms.time = sample.time
+            uniforms.timeDelta = sample.delta
+            uniforms.frame = sample.frame
+
+            do {
+                try renderer.render(
+                    runtime: runtime,
+                    into: commandBuffer,
+                    targetTexture: drawable.texture,
+                    drawableSize: drawableSize,
+                    builtin: uniforms
+                )
+            } catch {
+                commandBuffer.commit()
+                return
+            }
+
+            commandBuffer.present(drawable)
+            commandBuffer.commit()
+            frameIndex &+= 1
+        }
+    }
+}
+
+#if os(macOS)
+extension MetalRenderView: NSViewRepresentable {
+    func makeNSView(context: Context) -> MTKView { makeMTKView(context.coordinator) }
+    func updateNSView(_: MTKView, context _: Context) {}
+}
+#else
+extension MetalRenderView: UIViewRepresentable {
+    func makeUIView(context: Context) -> MTKView { makeMTKView(context.coordinator) }
+    func updateUIView(_: MTKView, context _: Context) {}
+}
+#endif
 
 extension PhosphorView {
     /// Loads a Phosphor shader from `bundle` (defaulting to `.main`) by name.

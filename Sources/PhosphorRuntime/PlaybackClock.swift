@@ -5,13 +5,13 @@ import Foundation
 ///
 /// ## Two-phase use
 ///
-/// MetalSprockets' `@ElementBuilder` closures must not mutate state, so reading
-/// the clock and advancing it are separate steps:
+/// Reading the clock and advancing it are separate steps so a renderer can
+/// sample the clock without mutating it mid-encode:
 ///
-/// 1. ``kernelSample(wallClock:)`` — pure read, safe inside an element builder.
-///    Returns the time/frame/delta the kernel should use this frame.
-/// 2. ``commit(wallClock:)`` — mutating, called from a side-effect hook
-///    (e.g. `.onWorkloadEnter`). Applies any pending pause snapshot or rebase.
+/// 1. ``kernelSample(wallClock:)`` — pure read. Returns the time/frame/delta
+///    the kernel should use this frame.
+/// 2. ``commit(wallClock:)`` — mutating. Applies any pending pause snapshot or
+///    rebase. Call once per frame after the sample is read.
 ///
 /// ## Events
 ///

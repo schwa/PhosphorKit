@@ -24,8 +24,7 @@ struct PhosphorCompiler {
     /// Looks up the `MTLFunction` for a pass by its kernel name.
     ///
     /// Returns an `MTLFunction` rather than an `MTLComputePipelineState`
-    /// because MetalSprockets owns pipeline-state creation/caching via
-    /// `ComputeKernel`.
+    /// because `PhosphorRenderer` owns pipeline-state creation/caching.
     func makeFunction(library: MTLLibrary, for passID: ResourceID) throws -> MTLFunction {
         guard let function = library.makeFunction(name: passID.raw) else {
             throw PhosphorCompileFailure.functionNotFound(passID)
