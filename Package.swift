@@ -15,10 +15,7 @@ let package = Package(
         .library(name: "PhosphorRuntime", targets: ["PhosphorRuntime"])
     ],
     dependencies: [
-        .package(url: "https://github.com/LebJe/TOMLKit", from: "0.6.0"),
-        .package(url: "https://github.com/tree-sitter/swift-tree-sitter", from: "0.25.0"),
-        .package(url: "https://github.com/tree-sitter/tree-sitter-cpp", branch: "master"),
-        .package(url: "https://github.com/tree-sitter-grammars/tree-sitter-toml", branch: "master")
+        .package(url: "https://github.com/LebJe/TOMLKit", from: "0.6.0")
     ],
     targets: [
         // Leaf: core data model. No Metal, no external generation deps.
@@ -37,11 +34,7 @@ let package = Package(
             name: "PhosphorCompile",
             dependencies: [
                 "PhosphorModel",
-                .product(name: "TOMLKit", package: "TOMLKit"),
-                .product(name: "SwiftTreeSitter", package: "swift-tree-sitter"),
-                .product(name: "SwiftTreeSitterLayer", package: "swift-tree-sitter"),
-                .product(name: "TreeSitterCPP", package: "tree-sitter-cpp"),
-                .product(name: "TreeSitterTOML", package: "tree-sitter-toml")
+                .product(name: "TOMLKit", package: "TOMLKit")
             ],
             resources: [
                 .copy("Resources/Phosphor.h")

@@ -1,15 +1,6 @@
 {
-  "originHash" : "ab5377a002f1162a33c9540ebf88abe157360541f3ba4c6e8f3d7ac1823280b2",
+  "originHash" : "9fdd91c5f6a2968e3f0f0c3ced6c44e8de67540da729f5fa8d9fc7a726e44f51",
   "pins" : [
-    {
-      "identity" : "swift-tree-sitter",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/tree-sitter/swift-tree-sitter",
-      "state" : {
-        "revision" : "08ef81eb8620617b55b08868126707ad72bf754f",
-        "version" : "0.25.0"
-      }
-    },
     {
       "identity" : "tomlkit",
       "kind" : "remoteSourceControl",
@@ -17,33 +8,6 @@
       "state" : {
         "revision" : "ec6198d37d495efc6acd4dffbd262cdca7ff9b3f",
         "version" : "0.6.0"
-      }
-    },
-    {
-      "identity" : "tree-sitter",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/tree-sitter/tree-sitter",
-      "state" : {
-        "revision" : "da6fe9beb4f7f67beb75914ca8e0d48ae48d6406",
-        "version" : "0.25.10"
-      }
-    },
-    {
-      "identity" : "tree-sitter-cpp",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/tree-sitter/tree-sitter-cpp",
-      "state" : {
-        "branch" : "master",
-        "revision" : "8b5b49eb196bec7040441bee33b2c9a4838d6967"
-      }
-    },
-    {
-      "identity" : "tree-sitter-toml",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/tree-sitter-grammars/tree-sitter-toml",
-      "state" : {
-        "branch" : "master",
-        "revision" : "64b56832c2cffe41758f28e05c756a3a98d16f41"
       }
     }
   ],
