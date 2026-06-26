@@ -11,13 +11,32 @@ public struct UniformDecl: Hashable, Sendable {
     public var kind: UniformKind
     public var defaultValue: UniformValue
     public var ui: UniformUIHint?
+    /// Optional binding to a render-surface gesture channel. Drives this
+    /// uniform from a drag / pinch / rotate on the main view, independently of
+    /// (and in addition to) any slider. Only valid on `.float` uniforms.
+    public var gesture: UniformGesture?
 
-    public init(name: String, kind: UniformKind, defaultValue: UniformValue, ui: UniformUIHint? = nil) {
+    public init(name: String, kind: UniformKind, defaultValue: UniformValue, ui: UniformUIHint? = nil, gesture: UniformGesture? = nil) {
         self.name = name
         self.kind = kind
         self.defaultValue = defaultValue
         self.ui = ui
+        self.gesture = gesture
     }
+}
+
+/// A render-surface gesture channel a `.float` uniform can bind to. The host
+/// translates the gesture into the uniform's value (mapped into its slider
+/// range when present, else 0...1).
+///
+/// - `x` / `y`: absolute normalized cursor position during a drag.
+/// - `zoom`: accumulated magnification.
+/// - `rotate`: accumulated rotation.
+public enum UniformGesture: String, Hashable, Codable, Sendable, CaseIterable {
+    case x
+    case y
+    case zoom
+    case rotate
 }
 
 /// Scalar/vector kind for a user uniform. Matches the host-side `UniformValue`.

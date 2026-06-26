@@ -72,5 +72,19 @@ public func validate(_ config: PhosphorConfiguration) -> [PhosphorDiagnostic] {
         }
     }
 
+    // Uniform gesture bindings: must be `.float`, and each channel drives at
+    // most one uniform.
+    var uniformsByGesture: [UniformGesture: [String]] = [:]
+    for uniform in config.uniforms {
+        guard let gesture = uniform.gesture else { continue }
+        if uniform.kind != .float {
+            diagnostics.append(.gestureRequiresFloat(uniform: uniform.name))
+        }
+        uniformsByGesture[gesture, default: []].append(uniform.name)
+    }
+    for (gesture, names) in uniformsByGesture where names.count > 1 {
+        diagnostics.append(.duplicateGesture(gesture, uniforms: names.sorted()))
+    }
+
     return diagnostics
 }

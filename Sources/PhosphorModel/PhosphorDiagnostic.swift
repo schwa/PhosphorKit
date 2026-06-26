@@ -37,6 +37,12 @@ public enum PhosphorDiagnostic: Hashable, Sendable {
     /// An image-init texture is also declared ping-pong. A feedback buffer is
     /// overwritten every frame, so seeding it from an image is meaningless.
     case imageTextureCannotPingPong(ResourceID)
+    /// A uniform binds a gesture but isn't a `.float` (gesture channels drive a
+    /// single scalar).
+    case gestureRequiresFloat(uniform: String)
+    /// Two uniforms bind the same gesture channel; a channel drives at most one
+    /// uniform.
+    case duplicateGesture(UniformGesture, uniforms: [String])
 }
 
 /// Compile error for one pass's kernel.
@@ -62,7 +68,9 @@ extension PhosphorDiagnostic {
              .readWriteHazard,
              .passHasNoOutput,
              .missingOutput,
-             .imageTextureCannotPingPong:
+             .imageTextureCannotPingPong,
+             .gestureRequiresFloat,
+             .duplicateGesture:
             return true
 
         case .compile, .missingAsset:

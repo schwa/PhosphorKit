@@ -19,6 +19,7 @@ extension UniformDecl: Codable {
         case kind
         case `default`
         case ui
+        case gesture
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -27,6 +28,7 @@ extension UniformDecl: Codable {
         try container.encode(kind, forKey: .kind)
         try container.encode(defaultValue, forKey: .default)
         try container.encodeIfPresent(ui, forKey: .ui)
+        try container.encodeIfPresent(gesture, forKey: .gesture)
     }
 
     public init(from decoder: Decoder) throws {
@@ -34,8 +36,9 @@ extension UniformDecl: Codable {
         let name = try container.decode(String.self, forKey: .name)
         let kind = try container.decode(UniformKind.self, forKey: .kind)
         let ui = try container.decodeIfPresent(UniformUIHint.self, forKey: .ui)
+        let gesture = try container.decodeIfPresent(UniformGesture.self, forKey: .gesture)
         let defaultValue = try Self.decodeValue(kind: kind, container: container, key: .default)
-        self.init(name: name, kind: kind, defaultValue: defaultValue, ui: ui)
+        self.init(name: name, kind: kind, defaultValue: defaultValue, ui: ui, gesture: gesture)
     }
 
     /// Decodes `default` based on the declared kind. Plain Codable wouldn't

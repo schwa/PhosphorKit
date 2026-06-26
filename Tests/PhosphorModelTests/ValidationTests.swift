@@ -173,4 +173,49 @@ struct CodableTests {
         let decoded = try JSONDecoder().decode(PhosphorConfiguration.self, from: data)
         #expect(decoded == original)
     }
+
+    @Test("A gesture-bound float uniform validates cleanly")
+    func gestureFloatClean() {
+        let config = PhosphorConfiguration(
+            textures: [Texture(id: "image")],
+            passes: [Pass(id: "image", textures: [.init(id: "image", access: .write)])],
+            output: "image",
+            uniforms: [UniformDecl(name: "angle", kind: .float, defaultValue: .float(0), gesture: .rotate)]
+        )
+        #expect(validate(config).isEmpty)
+    }
+
+    @Test("A gesture on a non-float uniform is rejected")
+    func gestureNonFloat() {
+        let config = PhosphorConfiguration(
+            textures: [Texture(id: "image")],
+            passes: [Pass(id: "image", textures: [.init(id: "image", access: .write)])],
+            output: "image",
+            uniforms: [UniformDecl(name: "tint", kind: .color, defaultValue: .float4(.init(1, 1, 1, 1)), gesture: .x)]
+        )
+        #expect(validate(config).contains(.gestureRequiresFloat(uniform: "tint")))
+    }
+
+    @Test("Two uniforms binding the same gesture channel are rejected")
+    func duplicateGestureChannel() {
+        let config = PhosphorConfiguration(
+            textures: [Texture(id: "image")],
+            passes: [Pass(id: "image", textures: [.init(id: "image", access: .write)])],
+            output: "image",
+            uniforms: [
+                UniformDecl(name: "a", kind: .float, defaultValue: .float(0), gesture: .x),
+                UniformDecl(name: "b", kind: .float, defaultValue: .float(0), gesture: .x)
+            ]
+        )
+        #expect(validate(config).contains(.duplicateGesture(.x, uniforms: ["a", "b"])))
+    }
+
+    @Test("Gesture binding round-trips through Codable")
+    func gestureRoundTrips() throws {
+        let original = UniformDecl(name: "zoom", kind: .float, defaultValue: .float(1), ui: .slider(min: 0.5, max: 4), gesture: .zoom)
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(UniformDecl.self, from: data)
+        #expect(decoded == original)
+        #expect(decoded.gesture == .zoom)
+    }
 }
