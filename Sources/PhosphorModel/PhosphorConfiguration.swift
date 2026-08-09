@@ -43,7 +43,9 @@ public struct PhosphorConfiguration: Hashable, Sendable, Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.textures = try container.decodeIfPresent([Texture].self, forKey: .textures) ?? []
         self.passes = try container.decodeIfPresent([Pass].self, forKey: .passes) ?? []
-        self.output = try container.decode(ResourceID.self, forKey: .output)
+        // Optional so an empty front-matter block decodes; ``normalized()``
+        // supplies the rest of the canonical single-pass shape (#51).
+        self.output = try container.decodeIfPresent(ResourceID.self, forKey: .output) ?? Self.defaultOutput
         self.uniforms = try container.decodeIfPresent([UniformDecl].self, forKey: .uniforms) ?? []
         self.flipY = try container.decodeIfPresent(Bool.self, forKey: .flipY) ?? false
     }

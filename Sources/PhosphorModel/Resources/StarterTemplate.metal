@@ -1,15 +1,7 @@
-/* phosphor:environment
-output = "image"
-
-[[textures]]
-id = "image"
-
-[[passes]]
-id = "image"
-textures = [
-    { id = "image", access = "write" },
-]
-*/
+/* phosphor:environment */
+// An empty environment block means the default: one drawable-sized `image`
+// texture, written by one pass called `image`. Declare textures, passes and
+// uniforms here when you need more — see docs/Front-Matter-Reference.md.
 
 uint2 gid [[thread_position_in_grid]];
 

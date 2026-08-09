@@ -45,11 +45,12 @@ public struct ParsedPhosphorSource: Hashable, Sendable {
     /// format), where the configuration is already split out from the source.
     /// Runs the same validation as the embedded-front-matter path.
     public init(document: PhosphorDocument) {
+        let configuration = document.configuration.normalized()
         self.init(
             originalSource: document.source,
             body: document.source,
-            configuration: document.configuration,
-            diagnostics: validate(document.configuration),
+            configuration: configuration,
+            diagnostics: validate(configuration),
             hasFrontMatter: true
         )
     }
@@ -96,7 +97,7 @@ public enum PhosphorFrontMatter {
         let configuration: PhosphorConfiguration
         do {
             let decoder = TOMLDecoder()
-            configuration = try decoder.decode(PhosphorConfiguration.self, from: toml)
+            configuration = try decoder.decode(PhosphorConfiguration.self, from: toml).normalized()
         } catch {
             return ParsedPhosphorSource(
                 originalSource: source,
