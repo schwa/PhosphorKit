@@ -14,9 +14,17 @@ import os
 @MainActor
 @Observable
 public final class AudioCaptureEngine {
-    /// User-facing on/off. Setting to `true` starts the engine (after
-    /// requesting permission); setting to `false` stops it and zeros the
-    /// ring buffer.
+    /// Where the samples come from.
+    public enum Source: String, Hashable, Codable, Sendable, CaseIterable {
+        /// The default input device.
+        case microphone
+        /// The system audio mix — whatever is playing out of the speakers.
+        /// macOS only, and needs the Screen Recording permission.
+        case systemAudio
+    }
+
+    /// User-facing on/off. Setting to `true` starts capture (after requesting
+    /// permission); setting to `false` stops it and zeros the ring buffer.
     public var isEnabled: Bool = false {
         didSet {
             guard oldValue != isEnabled else { return }
@@ -26,6 +34,20 @@ public final class AudioCaptureEngine {
             } else {
                 stop()
             }
+        }
+    }
+
+    /// Which input to capture. Changing it while enabled restarts capture on
+    /// the new source, and clears any denial recorded for the old one — the
+    /// two sources have unrelated permissions.
+    public var source: Source = .microphone {
+        didSet {
+            guard oldValue != source else { return }
+            Self.logger.info("source \(oldValue.rawValue, privacy: .public) -> \(self.source.rawValue, privacy: .public)")
+            isPermissionDenied = false
+            guard isEnabled else { return }
+            stop()
+            Task { await startIfPermitted() }
         }
     }
 
@@ -42,6 +64,10 @@ public final class AudioCaptureEngine {
     public let sampleCount: Int
 
     private let engine = AVAudioEngine()
+    #if os(macOS)
+    @ObservationIgnored
+    private var systemAudioSource: SystemAudioCaptureSource?
+    #endif
     /// Holds the ring buffer + lock + running flag. Lives in its own non-
     /// actor-isolated type so the AVAudioEngine tap block (which runs on a
     /// real-time audio thread, not the main actor) can write into it
@@ -74,6 +100,12 @@ public final class AudioCaptureEngine {
     // MARK: - Engine lifecycle
 
     private func startIfPermitted() async {
+        #if os(macOS)
+        if source == .systemAudio {
+            await startSystemAudio()
+            return
+        }
+        #endif
         let status = AVCaptureDevice.authorizationStatus(for: .audio)
         Self.logger.info("startIfPermitted: status=\(String(describing: status), privacy: .public)")
         switch status {
@@ -130,11 +162,41 @@ public final class AudioCaptureEngine {
         }
     }
 
+    #if os(macOS)
+    /// ScreenCaptureKit has no authorisation-status API to consult up front,
+    /// so "is it permitted" and "start it" are the same call: asking for
+    /// shareable content is what prompts, and what fails when denied.
+    private func startSystemAudio() async {
+        let source = systemAudioSource ?? SystemAudioCaptureSource(storage: storage)
+        systemAudioSource = source
+        storage.reset()
+        do {
+            try await source.start()
+            sampleRate = SystemAudioCaptureSource.sampleRate
+            isRunning = true
+            storage.isRunning = true
+        } catch {
+            Self.logger.error("system audio start failed: \(error, privacy: .public)")
+            isPermissionDenied = true
+            isRunning = false
+            storage.isRunning = false
+            isEnabled = false
+            systemAudioSource = nil
+        }
+    }
+    #endif
+
     private func stop() {
         if engine.isRunning {
             engine.inputNode.removeTap(onBus: 0)
             engine.stop()
         }
+        #if os(macOS)
+        if let systemAudioSource {
+            self.systemAudioSource = nil
+            Task { await systemAudioSource.stop() }
+        }
+        #endif
         isRunning = false
         storage.isRunning = false
         storage.reset()
@@ -164,7 +226,7 @@ private func installNonisolatedTap(on inputNode: AVAudioInputNode, format: AVAud
 
 /// Non-actor-isolated ring buffer + lock + flag, holding the bits the
 /// AVAudioEngine tap block needs to touch without going through any actor.
-private final class AudioRingStorage: @unchecked Sendable {
+final class AudioRingStorage: @unchecked Sendable {
     let sampleCount: Int
     private let lock = NSLock()
     private let ring: UnsafeMutableBufferPointer<Float>
@@ -226,9 +288,13 @@ private final class AudioRingStorage: @unchecked Sendable {
 
     func append(buffer: AVAudioPCMBuffer) {
         guard let channelData = buffer.floatChannelData else { return }
-        let frameCount = Int(buffer.frameLength)
+        append(samples: channelData[0], count: Int(buffer.frameLength))
+    }
+
+    /// Core append. The system-audio source hands over raw frames out of a
+    /// `CMSampleBuffer`'s audio buffer list, which isn't an `AVAudioPCMBuffer`.
+    func append(samples: UnsafePointer<Float>, count frameCount: Int) {
         guard frameCount > 0 else { return }
-        let samples = channelData[0]
         let base = ring.baseAddress!
         lock.lock()
         defer { lock.unlock() }
