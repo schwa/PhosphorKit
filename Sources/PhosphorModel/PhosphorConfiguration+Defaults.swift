@@ -1,7 +1,7 @@
-public extension PhosphorConfiguration {
+extension PhosphorConfiguration {
     /// Id used for the output texture and the single pass when a
     /// configuration doesn't name one.
-    static let defaultOutput: ResourceID = "image"
+    public static let defaultOutput: ResourceID = "image"
 
     /// Fills in the canonical single-pass shape wherever a configuration
     /// leaves a gap (#51).
@@ -14,7 +14,7 @@ public extension PhosphorConfiguration {
     /// Gaps are filled independently, so a configuration that declares only
     /// textures gets a pass, and one that declares only passes gets the
     /// output texture. Anything explicit is left alone — this only ever adds.
-    func normalized() -> Self {
+    public func normalized() -> Self {
         var copy = self
 
         if copy.textures.isEmpty {

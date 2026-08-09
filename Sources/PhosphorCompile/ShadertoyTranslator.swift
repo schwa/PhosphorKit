@@ -416,8 +416,8 @@ public enum ShadertoyTranslator {
     }
 }
 
-private extension String {
-    var trimmed: String {
+extension String {
+    fileprivate var trimmed: String {
         trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

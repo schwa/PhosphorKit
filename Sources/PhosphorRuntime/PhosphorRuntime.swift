@@ -62,14 +62,10 @@ public final class PhosphorRuntime {
         guard let queue = device.makeCommandQueue(),
               let commandBuffer = queue.makeCommandBuffer(),
               let encoder = commandBuffer.makeBlitCommandEncoder() else { return }
-        let bytesPerPixel: Int
-        switch texture.pixelFormat {
-        case .rgba8Unorm: bytesPerPixel = 4
-        case .bgra8Unorm: bytesPerPixel = 4
-        case .rgba16Float: bytesPerPixel = 8
-        case .rgba32Float: bytesPerPixel = 16
-        default: bytesPerPixel = 16
-        }
+        // Every texture here was allocated from a PhosphorPixelFormat, so the
+        // reverse lookup succeeds; the fallback is the widest format, which
+        // over-allocates the zero buffer rather than under-filling the texture.
+        let bytesPerPixel = PhosphorPixelFormat(texture.pixelFormat)?.bytesPerPixel ?? 16
         let bytesPerRow = texture.width * bytesPerPixel
         let length = bytesPerRow * texture.height
         guard let zero = device.makeBuffer(length: length, options: .storageModeShared) else {
@@ -509,12 +505,7 @@ public final class PhosphorRuntime {
     }
 
     private func mtlPixelFormat(_ format: PhosphorPixelFormat) -> MTLPixelFormat {
-        switch format {
-        case .rgba8Unorm: return .rgba8Unorm
-        case .bgra8Unorm: return .bgra8Unorm
-        case .rgba16Float: return .rgba16Float
-        case .rgba32Float: return .rgba32Float
-        }
+        format.metalPixelFormat
     }
 
     private static func makeFallbackTexture(device: MTLDevice) throws -> MTLTexture {

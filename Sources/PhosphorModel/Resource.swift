@@ -48,10 +48,57 @@ public enum TextureSize: Hashable, Sendable {
 /// Image-init textures ignore this field entirely: they use whatever format
 /// the image decodes to.
 public enum PhosphorPixelFormat: String, Hashable, Codable, Sendable, CaseIterable {
+    // 8-bit normalised
+    case r8Unorm
+    case rg8Unorm
     case rgba8Unorm
     case bgra8Unorm
+    case rgba8Unorm_srgb // swiftlint:disable:this identifier_name
+    case bgra8Unorm_srgb // swiftlint:disable:this identifier_name
+    case r8Snorm
+    case rgba8Snorm
+
+    // 16-bit normalised
+    case r16Unorm
+    case rg16Unorm
+    case rgba16Unorm
+
+    // Floating point
+    case r16Float
+    case rg16Float
     case rgba16Float
+    case r32Float
+    case rg32Float
     case rgba32Float
+
+    // Packed
+    case rgb10a2Unorm
+    case rg11b10Float
+    case rgb9e5Float
+
+    /// Bytes one pixel occupies. Used to size the zero-fill buffer when a
+    /// texture is cleared; derived here so there's no second table to keep in
+    /// step with the format list.
+    public var bytesPerPixel: Int {
+        switch self {
+        case .r8Unorm, .r8Snorm:
+            return 1
+
+        case .rg8Unorm, .r16Unorm, .r16Float:
+            return 2
+
+        case .rgba8Unorm, .bgra8Unorm, .rgba8Unorm_srgb, .bgra8Unorm_srgb, .rgba8Snorm,
+             .rg16Unorm, .rg16Float, .r32Float,
+             .rgb10a2Unorm, .rg11b10Float, .rgb9e5Float:
+            return 4
+
+        case .rgba16Unorm, .rgba16Float, .rg32Float:
+            return 8
+
+        case .rgba32Float:
+            return 16
+        }
+    }
 }
 
 /// When the ping-pong swap happens for a texture.
