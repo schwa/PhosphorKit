@@ -268,3 +268,139 @@ struct ShadertoyTranslatorTests {
         #expect(compileErrors.isEmpty, "\(compileErrors)")
     }
 }
+
+/// Multi-pass Shadertoy shaders: Buffer A-D plus the Common tab (#143).
+@Suite("Shadertoy multi-pass translation")
+struct ShadertoyMultiPassTests {
+    static let twoPass = """
+    // === Common ===
+    float wobble(float x) { return sin(x); }
+
+    // === Buffer A ===
+    void mainImage(out vec4 fragColor, in vec2 fragCoord)
+    {
+        vec2 uv = fragCoord / iResolution.xy;
+        fragColor = vec4(uv, 0.0, 1.0);
+    }
+
+    // === Image ===
+    void mainImage(out vec4 fragColor, in vec2 fragCoord)
+    {
+        vec2 uv = fragCoord / iResolution.xy;
+        fragColor = vec4(wobble(uv.x), uv.y, 0.0, 1.0);
+    }
+    """
+
+    // MARK: Tab splitting
+
+    @Test("Unmarked source is a single Image pass")
+    func singleTab() {
+        let tabs = ShadertoyTranslator.splitTabs(ShadertoyTranslatorTests.plaid)
+        #expect(tabs.common == nil)
+        #expect(tabs.renderPasses.map(\.id) == ["image"])
+    }
+
+    @Test("Markers split Common, buffers and Image")
+    func splitsTabs() {
+        let tabs = ShadertoyTranslator.splitTabs(Self.twoPass)
+        #expect(tabs.common?.contains("wobble") == true)
+        #expect(tabs.renderPasses.map(\.id) == ["bufferA", "image"])
+    }
+
+    /// People paste these markers with whatever decoration they like, and
+    /// Shadertoy itself calls them "Buf A" in places.
+    @Test("Marker spellings", arguments: [
+        "// Common",
+        "//=== Common ===",
+        "//---- common ----",
+        "  // *** COMMON ***"
+    ])
+    func markerSpellings(marker: String) {
+        let source = "\(marker)\nfloat helper() { return 1.0; }\n// Image\nvoid mainImage(out vec4 c, in vec2 p) { c = vec4(1.0); }"
+        #expect(ShadertoyTranslator.splitTabs(source).common?.contains("helper") == true)
+    }
+
+    @Test("Buffers sort into execution order regardless of paste order")
+    func bufferOrdering() {
+        let source = """
+        // Buffer C
+        void mainImage(out vec4 c, in vec2 p) { c = vec4(3.0); }
+        // Buffer A
+        void mainImage(out vec4 c, in vec2 p) { c = vec4(1.0); }
+        // Image
+        void mainImage(out vec4 c, in vec2 p) { c = vec4(0.0); }
+        """
+        #expect(ShadertoyTranslator.splitTabs(source).renderPasses.map(\.id) == ["bufferA", "bufferC", "image"])
+    }
+
+    /// Text above the first marker belongs to no tab; losing it would silently
+    /// drop a pasted preamble.
+    @Test("Source before the first marker is kept as Common")
+    func preambleBecomesCommon() {
+        let source = """
+        float helper() { return 2.0; }
+        // Image
+        void mainImage(out vec4 c, in vec2 p) { c = vec4(helper()); }
+        """
+        #expect(ShadertoyTranslator.splitTabs(source).common?.contains("helper") == true)
+    }
+
+    // MARK: Translation
+
+    @Test("A two-pass shader produces two passes and a buffer texture")
+    func translatesTwoPasses() throws {
+        let translation = try #require(ShadertoyTranslator.translate(Self.twoPass))
+        #expect(translation.source.contains("kernel void bufferA("))
+        #expect(translation.source.contains("kernel void image("))
+        #expect(translation.source.contains(#"id = "bufferA""#))
+        #expect(translation.source.contains(#"swap = "endOfFrame""#))
+        // Common lands once, at file scope, not per pass.
+        #expect(translation.source.ranges(of: "float wobble(float x)").count == 1)
+    }
+
+    /// Shadertoy keeps channel-to-buffer routing outside the shader source, so
+    /// it can't be recovered. Saying so is the whole point.
+    @Test("Buffer passes report that channel routing must be wired by hand")
+    func reportsUnrecoverableRouting() throws {
+        let translation = try #require(ShadertoyTranslator.translate(Self.twoPass))
+        #expect(translation.diagnostics.contains { diagnostic in
+            if case .frontMatterParse(let message, _) = diagnostic {
+                return message.contains("bufferA") && message.contains("by hand")
+            }
+            return false
+        })
+    }
+
+    @Test("A tab without a mainImage isn't claimed")
+    func rejectsIncompleteTabs() {
+        let source = """
+        // Buffer A
+        float orphan() { return 1.0; }
+        // Image
+        void mainImage(out vec4 c, in vec2 p) { c = vec4(1.0); }
+        """
+        #expect(ShadertoyTranslator.translate(source) == nil)
+    }
+
+    // MARK: End to end
+
+    @Test("A two-pass translation parses and compiles")
+    @MainActor
+    func multiPassCompiles() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else { throw TestSkip.noDevice }
+        let parsed = ParsedPhosphorSource(source: Self.twoPass)
+        #expect(parsed.configuration.passes.map(\.id.raw) == ["bufferA", "image"])
+        // Translation notes ride along as frontMatterParse diagnostics, so
+        // filter to structural problems (see Phosphor #146).
+        let structural = parsed.diagnostics.filter { diagnostic in
+            if case .frontMatterParse = diagnostic { return false }
+            return true
+        }
+        #expect(structural.isEmpty, "validation: \(structural)")
+        let compileErrors = ShaderCompiler.compile(parsed: parsed, device: device).diagnostics.filter { diagnostic in
+            if case .compile = diagnostic { return true }
+            return false
+        }
+        #expect(compileErrors.isEmpty, "\(compileErrors)")
+    }
+}

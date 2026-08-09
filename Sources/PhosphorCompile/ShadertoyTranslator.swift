@@ -37,35 +37,57 @@ public enum ShadertoyTranslator {
 
     /// Translates `source` if it looks like Shadertoy; returns nil otherwise.
     public static func translate(_ source: String) -> Translation? {
-        guard let signature = signature(in: source) else { return nil }
         guard source.range(of: #"\bkernel\s+void\b"#, options: .regularExpression) == nil else { return nil }
 
         var diagnostics: [PhosphorDiagnostic] = []
-        var body = source
+        let tabs = splitTabs(source)
+        // Every renderable tab needs its own mainImage; without one there's
+        // nothing to translate.
+        guard !tabs.renderPasses.isEmpty,
+              tabs.renderPasses.allSatisfy({ signature(in: $0.source) != nil }) else {
+            return nil
+        }
 
         for pass in unsupportedPasses(in: source) {
             diagnostics.append(.frontMatterParse(
-                "Shadertoy '\(pass)' passes aren't supported; only the Image pass was translated.",
+                "Shadertoy '\(pass)' passes aren't supported and were dropped; "
+                    + "only Image and Buffer A–D were translated.",
                 line: nil
             ))
         }
-
-        guard let split = splitMainImage(body) else { return nil }
 
         // Channel calls are rewritten before `iChannelN` itself moves.
         func rewrite(_ text: String) -> String {
             rewriteTypes(rewriteBuiltins(rewriteChannelCalls(text)))
         }
-        let helpers = rewrite(split.before) + rewrite(split.after)
-        body = rewrite(split.body)
+
+        // Common is shared by every Shadertoy pass. Phosphor puts all kernels
+        // in one file, so it just becomes top-level source.
+        var helpers = tabs.common.map(rewrite) ?? ""
+        var kernels = ""
+
+        for pass in tabs.renderPasses {
+            guard let signature = signature(in: pass.source),
+                  let split = splitMainImage(pass.source) else {
+                return nil
+            }
+            helpers += rewrite(split.before) + rewrite(split.after)
+            kernels += entryPoint(
+                body: rewrite(split.body),
+                signature: signature,
+                passID: pass.id,
+                outputID: pass.id
+            )
+        }
 
         // Shadertoy's built-ins are globals; Phosphor's arrive as a kernel
         // parameter. Anything outside mainImage that reads them has no
         // `uniforms` in scope, and there's no lexical fix for that.
         if helpers.contains("uniforms.") {
             diagnostics.append(.frontMatterParse(
-                "Shadertoy built-ins (iTime, iResolution, iChannelN, …) are referenced outside mainImage. "
-                    + "Metal has no globals, so those helpers need the built-ins passed in as parameters.",
+                "Shadertoy built-ins (iTime, iResolution, iChannelN, …) are referenced outside mainImage"
+                    + (tabs.common == nil ? "" : " (possibly in the Common tab)")
+                    + ". Metal has no globals, so those helpers need the built-ins passed in as parameters.",
                 line: nil
             ))
         }
@@ -79,14 +101,107 @@ public enum ShadertoyTranslator {
             ))
         }
 
+        let bufferIDs = tabs.renderPasses.map(\.id).filter { $0 != Self.imagePassID }
+        if !bufferIDs.isEmpty {
+            diagnostics.append(.frontMatterParse(
+                "Translated \(bufferIDs.count) buffer pass(es): \(bufferIDs.joined(separator: ", ")). "
+                    + "Shadertoy stores which buffer each iChannel reads outside the shader source, "
+                    + "so those bindings can't be recovered — wire the iChannel textures to the buffer "
+                    + "resources by hand in the front matter.",
+                line: nil
+            ))
+        }
+
         return Translation(
-            source: frontMatter(channels: channels)
+            source: frontMatter(channels: channels, passIDs: tabs.renderPasses.map(\.id))
                 + "\n"
                 + preamble()
                 + helpers
-                + entryPoint(body: body, signature: signature),
+                + kernels,
             diagnostics: diagnostics
         )
+    }
+
+    // MARK: - Tabs
+
+    /// Shadertoy's pass id for the final image.
+    static let imagePassID = "image"
+
+    /// One Shadertoy editor tab.
+    struct Tab: Hashable {
+        /// Phosphor pass and texture id: `image`, or `bufferA`…`bufferD`.
+        var id: String
+        var source: String
+    }
+
+    struct Tabs {
+        /// The Common tab, if present — source shared by every pass.
+        var common: String?
+        /// Passes in execution order: buffers first, then image.
+        var renderPasses: [Tab]
+    }
+
+    /// A line that is nothing but a comment naming a Shadertoy tab, allowing
+    /// the decoration people tend to paste around them:
+    ///
+    ///     // Common
+    ///     // === Buffer A ===
+    ///     //---- Image ----
+    ///
+    /// Shadertoy keeps each pass in a separate editor tab, so pasted source
+    /// carries no delimiter of its own and something has to be invented.
+    private static let tabMarkerPattern =
+        #"(?im)^[ \t]*//[ \t=*#\-]*(common|image|buf(?:fer)?[ \t]*([a-d]))[ \t=*#\-]*$"#
+
+    /// Splits `source` at tab markers. With no markers the whole thing is the
+    /// Image pass, which is the single-tab case and stays byte-identical to
+    /// the pre-multi-pass behaviour.
+    static func splitTabs(_ source: String) -> Tabs {
+        guard let regex = try? NSRegularExpression(pattern: tabMarkerPattern) else {
+            return Tabs(common: nil, renderPasses: [Tab(id: imagePassID, source: source)])
+        }
+        let nsSource = source as NSString
+        let matches = regex.matches(in: source, range: NSRange(location: 0, length: nsSource.length))
+        guard !matches.isEmpty else {
+            return Tabs(common: nil, renderPasses: [Tab(id: imagePassID, source: source)])
+        }
+
+        var common: String?
+        var buffers: [(letter: String, source: String)] = []
+        var image: String?
+
+        for (index, match) in matches.enumerated() {
+            let bodyStart = match.range.upperBound
+            let bodyEnd = index + 1 < matches.count ? matches[index + 1].range.location : nsSource.length
+            let body = nsSource.substring(with: NSRange(location: bodyStart, length: bodyEnd - bodyStart))
+            let label = nsSource.substring(with: match.range(at: 1)).lowercased()
+
+            if label == "common" {
+                common = (common ?? "") + body
+            } else if label == "image" {
+                image = (image ?? "") + body
+            } else {
+                let letter = nsSource.substring(with: match.range(at: 2)).uppercased()
+                buffers.append((letter, body))
+            }
+        }
+
+        // Anything before the first marker belongs to no tab; treat it as
+        // Common so a preamble pasted above the markers isn't lost.
+        let preambleRange = NSRange(location: 0, length: matches[0].range.location)
+        let preamble = nsSource.substring(with: preambleRange)
+        if !preamble.trimmed.isEmpty {
+            common = preamble + (common ?? "")
+        }
+
+        // Shadertoy runs buffers in order, then Image.
+        var passes = buffers
+            .sorted { $0.letter < $1.letter }
+            .map { Tab(id: "buffer\($0.letter)", source: $0.source) }
+        if let image {
+            passes.append(Tab(id: imagePassID, source: image))
+        }
+        return Tabs(common: common, renderPasses: passes)
     }
 
     // MARK: - Detection
@@ -345,7 +460,7 @@ public enum ShadertoyTranslator {
 
     // MARK: - Generated scaffolding
 
-    static func frontMatter(channels: Set<Int>) -> String {
+    static func frontMatter(channels: Set<Int>, passIDs: [String]) -> String {
         var out = """
         /* phosphor:environment
         output = "image"
@@ -354,6 +469,18 @@ public enum ShadertoyTranslator {
         id = "image"
 
         """
+        // Buffers get Shadertoy's semantics: a pass reading one sees last
+        // frame's contents, which is exactly what `endOfFrame` means.
+        for passID in passIDs where passID != imagePassID {
+            out += """
+
+            [[textures]]
+            id = "\(passID)"
+            format = "rgba32Float"
+            swap = "endOfFrame"
+
+            """
+        }
         for index in channels.sorted() {
             out += """
 
@@ -362,17 +489,20 @@ public enum ShadertoyTranslator {
 
             """
         }
-        out += """
+        for passID in passIDs {
+            out += """
 
-        [[passes]]
-        id = "image"
-        textures = [
-            { id = "image", access = "write" },
-        """
-        for index in channels.sorted() {
-            out += "\n    { id = \"iChannel\(index)\", access = \"sample\" },"
+            [[passes]]
+            id = "\(passID)"
+            textures = [
+                { id = "\(passID)", access = "write" },
+            """
+            for index in channels.sorted() {
+                out += "\n    { id = \"iChannel\(index)\", access = \"sample\" },"
+            }
+            out += "\n]\n"
         }
-        out += "\n]\n*/\n"
+        out += "*/\n"
         return out
     }
 
@@ -395,11 +525,16 @@ public enum ShadertoyTranslator {
     /// the type. The locals keep the user's own parameter names so the body
     /// compiles unchanged. Shadertoy's `fragCoord` is a pixel centre, hence
     /// the half-pixel offset `gl_FragCoord` also has.
-    static func entryPoint(body: String, signature: Signature) -> String {
+    static func entryPoint(
+        body: String,
+        signature: Signature,
+        passID: String,
+        outputID: String
+    ) -> String {
         """
 
 
-        kernel void image(
+        kernel void \(passID)(
             device const Uniforms&     uniforms     [[buffer(0)]],
             device const UserUniforms& userUniforms [[buffer(1)]])
         {
@@ -409,7 +544,7 @@ public enum ShadertoyTranslator {
             float4 \(signature.fragColor) = float4(0.0f, 0.0f, 0.0f, 1.0f);
             float2 \(signature.fragCoord) = float2(gid) + 0.5f;
         \(body)
-            uniforms.textures.image.write(\(signature.fragColor), gid);
+            uniforms.textures.\(outputID).write(\(signature.fragColor), gid);
         }
 
         """
