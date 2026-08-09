@@ -14,6 +14,23 @@ typedef float2 vec2;
 typedef float3 vec3;
 typedef float4 vec4;
 
+// GLSL's mod(), which MSL has no equivalent of at all — a ported shader
+// calling mod() fails to compile with "use of undeclared identifier".
+//
+// Deliberately not defined as fmod(): GLSL's mod(x, y) is
+// x - y * floor(x / y), so the result takes the sign of the divisor, whereas
+// fmod() takes the sign of the dividend. They agree for non-negative
+// arguments and disagree for negative ones, so aliasing to fmod would turn a
+// compile error into wrong pixels for any shader that tiles across the origin.
+inline float  mod(float  x, float  y) { return x - y * floor(x / y); }
+inline float2 mod(float2 x, float2 y) { return x - y * floor(x / y); }
+inline float3 mod(float3 x, float3 y) { return x - y * floor(x / y); }
+inline float4 mod(float4 x, float4 y) { return x - y * floor(x / y); }
+// GLSL also allows a scalar divisor against a vector dividend.
+inline float2 mod(float2 x, float  y) { return x - y * floor(x / y); }
+inline float3 mod(float3 x, float  y) { return x - y * floor(x / y); }
+inline float4 mod(float4 x, float  y) { return x - y * floor(x / y); }
+
 // Magic constant used by some 4D simplex-noise ports.
 #define F4 0.309016994374947451
 
