@@ -151,8 +151,13 @@ public final class PhosphorRuntime {
             let compiled = ShaderCompiler.compile(configuration: configuration, userSource: source, device: device)
             self.library = compiled.library
             self.passFunctions = compiled.passFunctions
-            self.diagnostics = compiled.diagnostics
-            logDiagnostics(compiled.diagnostics)
+            // A source-less runtime is a placeholder: editors default-construct
+            // one and only load the document a moment later. Compiling nothing
+            // against the default configuration always yields
+            // `missingOutput("image")`, which flashed up as a red banner until
+            // the first real load replaced it (#97). Nothing to diagnose yet.
+            self.diagnostics = source.isEmpty ? [] : compiled.diagnostics
+            logDiagnostics(self.diagnostics)
         } catch {
             // TODO: surface this instead of trapping once we have a UI path.
             fatalError("PhosphorRuntime initialization failed: \(error)")
