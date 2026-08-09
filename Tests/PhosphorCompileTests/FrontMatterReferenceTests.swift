@@ -1,4 +1,5 @@
 import Foundation
+import Metal
 import PhosphorCompile
 import PhosphorModel
 import Testing
@@ -177,5 +178,52 @@ struct FrontMatterReferenceTests {
         #expect(parsed.configuration.passes.first?.enabled == true)
         #expect(parsed.configuration.passes.first?.once == false)
         #expect(parsed.configuration.flipY == false)
+    }
+}
+
+@Suite("Palette usage example")
+struct PaletteExampleTests {
+    /// The palette snippet in the reference has to parse and compile, since
+    /// it's the only place the sampling idiom is written down (#123).
+    @Test("The documented palette shader compiles")
+    @MainActor
+    func paletteExampleCompiles() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else { throw TestSkip.noDevice }
+        let source = """
+        /* phosphor:environment
+        output = "image"
+
+        [[textures]]
+        id = "image"
+
+        [[textures]]
+        id = "palette"
+        init = { kind = "image", file = "palette-viridis" }
+
+        [[passes]]
+        id = "image"
+        textures = [
+            { id = "image", access = "write" },
+            { id = "palette", access = "sample" },
+        ]
+        */
+
+        uint2 gid [[thread_position_in_grid]];
+
+        constexpr sampler paletteSampler(coord::normalized, address::clamp_to_edge, filter::linear);
+
+        kernel void image(
+            device const Uniforms&     uniforms     [[buffer(0)]],
+            device const UserUniforms& userUniforms [[buffer(1)]])
+        {
+            float t = saturate(float(gid.x) / uniforms.resolution.x);
+            float3 color = uniforms.textures.palette.sample(paletteSampler, float2(t, 0.5)).rgb;
+            uniforms.textures.image.write(float4(color, 1.0), gid);
+        }
+        """
+        let parsed = ParsedPhosphorSource(source: source)
+        #expect(parsed.diagnostics.isEmpty, "\(parsed.diagnostics)")
+        let errors = ShaderCompiler.compile(parsed: parsed, device: device).diagnostics
+        #expect(errors.isEmpty, "\(errors)")
     }
 }

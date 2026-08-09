@@ -39,8 +39,26 @@ public enum BuiltinTextures {
         Entry(name: "builtin:noise-white-rgb", displayName: "White Noise (RGB)", resource: "noise-white-rgb.png"),
         Entry(name: "builtin:noise-value", displayName: "Value Noise", resource: "noise-value.png"),
         Entry(name: "builtin:noise-fbm", displayName: "Fractal Noise (fBm)", resource: "noise-fbm.png"),
-        Entry(name: "builtin:noise-blue", displayName: "Blue Noise", resource: "noise-blue.png")
+        Entry(name: "builtin:noise-blue", displayName: "Blue Noise", resource: "noise-blue.png"),
+
+        // Colour-palette LUTs (#123). 256x1, so a shader colourises a scalar
+        // with `palette.sample(s, float2(t, 0.5))` — no 1D-texture support
+        // needed. Regenerate with Scripts/generate-palettes.py, which records
+        // where the data comes from.
+        Entry(name: "builtin:palette-viridis", displayName: "Viridis", resource: "palette-viridis.png"),
+        Entry(name: "builtin:palette-magma", displayName: "Magma", resource: "palette-magma.png"),
+        Entry(name: "builtin:palette-inferno", displayName: "Inferno", resource: "palette-inferno.png"),
+        Entry(name: "builtin:palette-plasma", displayName: "Plasma", resource: "palette-plasma.png"),
+        Entry(name: "builtin:palette-cividis", displayName: "Cividis", resource: "palette-cividis.png"),
+        Entry(name: "builtin:palette-grayscale", displayName: "Grayscale", resource: "palette-grayscale.png"),
+        Entry(name: "builtin:palette-hsv", displayName: "HSV", resource: "palette-hsv.png"),
+        Entry(name: "builtin:palette-heat", displayName: "Heat", resource: "palette-heat.png")
     ]
+
+    /// The colour-palette entries, for UI that wants to group them.
+    public static var palettes: [Entry] {
+        all.filter { $0.id.hasPrefix("palette-") }
+    }
 
     /// True when `name` is in the reserved built-in namespace.
     public static func isBuiltin(_ name: String) -> Bool {
