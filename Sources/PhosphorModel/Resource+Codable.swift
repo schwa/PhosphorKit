@@ -70,7 +70,7 @@ extension TextureSize: Codable {
         let container = try decoder.container(keyedBy: KeyedKey.self)
         if let fixed = try? container.decode(FixedSize.self, forKey: .fixed) {
             self = .fixed(width: fixed.width, height: fixed.height)
-        } else if let scale = try? container.decode(Float.self, forKey: .scaledDrawable) {
+        } else if let scale = try? container.decodeLenientFloat(forKey: .scaledDrawable) {
             self = .scaledDrawable(scale)
         } else {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unknown TextureSize shape"))
@@ -141,7 +141,7 @@ extension TextureInit: Codable {
             self = .zero
 
         case .fill:
-            let rgba = try container.decode([Float].self, forKey: .color)
+            let rgba = try container.decodeLenientFloatArray(forKey: .color)
             guard rgba.count == 4 else {
                 throw DecodingError.dataCorruptedError(forKey: .color, in: container, debugDescription: "fill color must have 4 components")
             }

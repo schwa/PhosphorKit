@@ -46,24 +46,24 @@ extension UniformDecl: Codable {
     private static func decodeValue(kind: UniformKind, container: KeyedDecodingContainer<CodingKeys>, key: CodingKeys) throws -> UniformValue {
         switch kind {
         case .float:
-            return .float(try container.decode(Float.self, forKey: key))
+            return .float(try container.decodeLenientFloat(forKey: key))
 
         case .float2:
-            let values = try container.decode([Float].self, forKey: key)
+            let values = try container.decodeLenientFloatArray(forKey: key)
             guard values.count == 2 else {
                 throw DecodingError.dataCorruptedError(forKey: key, in: container, debugDescription: "float2 requires 2 components, got \(values.count)")
             }
             return .float2(.init(values[0], values[1]))
 
         case .float3:
-            let values = try container.decode([Float].self, forKey: key)
+            let values = try container.decodeLenientFloatArray(forKey: key)
             guard values.count == 3 else {
                 throw DecodingError.dataCorruptedError(forKey: key, in: container, debugDescription: "float3 requires 3 components, got \(values.count)")
             }
             return .float3(.init(values[0], values[1], values[2]))
 
         case .float4, .color:
-            let values = try container.decode([Float].self, forKey: key)
+            let values = try container.decodeLenientFloatArray(forKey: key)
             guard values.count == 4 else {
                 throw DecodingError.dataCorruptedError(forKey: key, in: container, debugDescription: "\(kind.rawValue) requires 4 components, got \(values.count)")
             }
@@ -176,6 +176,19 @@ extension UniformUIHint: Codable {
     private struct SliderPayload: Codable {
         var min: Float
         var max: Float
+
+        // Hand-written so `min = 0, max = 4` works as well as `0.0`/`4.0`
+        // (#145) — a slider range is exactly where round numbers get typed.
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            self.min = try container.decodeLenientFloat(forKey: .min)
+            self.max = try container.decodeLenientFloat(forKey: .max)
+        }
+
+        init(min: Float, max: Float) {
+            self.min = min
+            self.max = max
+        }
     }
 
     private struct Wrapped: Encodable {
