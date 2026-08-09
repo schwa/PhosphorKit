@@ -69,6 +69,14 @@ public enum PhosphorFrontMatter {
     public static func parse(_ source: String) -> ParsedPhosphorSource {
         let fallback = PhosphorConfiguration(output: "image")
         guard let (block, body) = extractBlock(source) else {
+            // No front matter. If it's Shadertoy source, translate it and
+            // parse the result; the user keeps editing their original text.
+            if let translation = ShadertoyTranslator.translate(source) {
+                var parsed = parse(translation.source)
+                parsed.originalSource = source
+                parsed.diagnostics = translation.diagnostics + parsed.diagnostics
+                return parsed
+            }
             return ParsedPhosphorSource(originalSource: source, body: source, configuration: fallback, diagnostics: [], hasFrontMatter: false)
         }
 
