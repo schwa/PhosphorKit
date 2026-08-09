@@ -82,7 +82,12 @@ public final class PhosphorRenderer {
         }
         let useLists = runtime.writePassUniforms(builtin: builtin, parity: parityByResource)
 
+        // One-shot passes are skipped except on the first frame after their
+        // state was invalidated (reload, reset, or texture reallocation).
+        let runOneShotPasses = runtime.consumeOneShotPasses()
+
         for pass in runtime.configuration.passes where pass.enabled {
+            if pass.once, !runOneShotPasses { continue }
             try encodeComputePass(
                 pass,
                 runtime: runtime,

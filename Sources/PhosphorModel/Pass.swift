@@ -12,21 +12,34 @@ public struct Pass: Hashable, Sendable, Codable {
     public var id: ResourceID
     public var textures: [TextureBinding]
     public var enabled: Bool
+    /// When true the pass runs once at init rather than every frame, and is
+    /// re-run only when its state is invalidated: reload/recompile, an
+    /// explicit reset, or a texture reallocation (resize). Use it to
+    /// precompute something a per-frame pass then reads — a lookup table, a
+    /// noise field, a distance transform.
+    ///
+    /// Not suitable for writing to a ping-pong (`swap`) texture: a single run
+    /// only fills the half matching that frame's parity, leaving the other
+    /// half blank.
+    public var once: Bool
 
     public init(
         id: ResourceID,
         textures: [TextureBinding] = [],
-        enabled: Bool = true
+        enabled: Bool = true,
+        once: Bool = false
     ) {
         self.id = id
         self.textures = textures
         self.enabled = enabled
+        self.once = once
     }
 
     private enum CodingKeys: String, CodingKey {
         case id
         case textures
         case enabled
+        case once
     }
 
     public init(from decoder: Decoder) throws {
@@ -34,6 +47,7 @@ public struct Pass: Hashable, Sendable, Codable {
         self.id = try container.decode(ResourceID.self, forKey: .id)
         self.textures = try container.decodeIfPresent([TextureBinding].self, forKey: .textures) ?? []
         self.enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        self.once = try container.decodeIfPresent(Bool.self, forKey: .once) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -41,6 +55,10 @@ public struct Pass: Hashable, Sendable, Codable {
         try container.encode(id, forKey: .id)
         try container.encode(textures, forKey: .textures)
         try container.encode(enabled, forKey: .enabled)
+        // Omitted when false so round-tripped front-matter stays terse.
+        if once {
+            try container.encode(once, forKey: .once)
+        }
     }
 
     /// Binds one of the pass's textures by id, with an MSL access mode.

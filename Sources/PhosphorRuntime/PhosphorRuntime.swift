@@ -37,8 +37,21 @@ public final class PhosphorRuntime {
     /// Surfaced to kernels via `Uniforms.resized`.
     private var resizedFlag: Bool = false
 
+    /// True while one-shot passes are due to run. Set on init, on reload, on
+    /// ``signalReset()``, and whenever a texture is (re)allocated; cleared by
+    /// ``consumeOneShotPasses()`` once the renderer has encoded them.
+    private var oneShotPassesPending: Bool = true
+
+    /// Whether one-shot passes should be encoded this frame. Consuming clears
+    /// the flag, so the renderer must call it exactly once per frame.
+    public func consumeOneShotPasses() -> Bool {
+        defer { oneShotPassesPending = false }
+        return oneShotPassesPending
+    }
+
     public func signalReset() {
         resizedFlag = true
+        oneShotPassesPending = true
         for (_, pair) in textures where pair.pingPong {
             zeroTexture(pair.a)
             zeroTexture(pair.b)
@@ -206,6 +219,7 @@ public final class PhosphorRuntime {
             let compiled = compile()
             self.library = compiled.library
             self.passFunctions = compiled.passFunctions
+            self.oneShotPassesPending = true
             self.diagnostics = compiled.diagnostics
             logDiagnostics(compiled.diagnostics)
         } catch {
@@ -254,6 +268,9 @@ public final class PhosphorRuntime {
 
             textures[texture.id] = try allocate(texture: texture, width: width, height: height)
             resizedFlag = true
+            // A fresh texture is blank, so anything a one-shot pass wrote into
+            // it is gone; re-seed on the next frame.
+            oneShotPassesPending = true
         }
 
         for staleID in textures.keys where !liveIDs.contains(staleID) {
