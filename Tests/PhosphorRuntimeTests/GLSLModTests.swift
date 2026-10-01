@@ -55,18 +55,17 @@ struct GLSLModTests {
         descriptor.storageMode = .shared
         let target = try #require(device.makeTexture(descriptor: descriptor))
 
-        let queue = try #require(device.makeCommandQueue())
-        let commandBuffer = try #require(queue.makeCommandBuffer())
-        try PhosphorRenderer(device: device).render(
-            runtime: runtime,
-            into: commandBuffer,
-            targetTexture: target,
-            drawableSize: CGSize(width: 1, height: 1),
-            builtin: BuiltinUniforms(resolution: SIMD2<Float>(1, 1))
-        )
-        commandBuffer.commit()
-        commandBuffer.waitUntilCompleted()
-        #expect(commandBuffer.error == nil, "\(String(describing: commandBuffer.error))")
+        let renderer = try PhosphorRenderer(device: device)
+        let harness = try Metal4Harness(device: device)
+        try harness.run { commandBuffer in
+            try renderer.render(
+                runtime: runtime,
+                into: commandBuffer,
+                targetTexture: target,
+                drawableSize: CGSize(width: 1, height: 1),
+                builtin: BuiltinUniforms(resolution: SIMD2<Float>(1, 1))
+            )
+        }
 
         var pixel = SIMD4<Float>(repeating: 0)
         withUnsafeMutableBytes(of: &pixel) { buffer in

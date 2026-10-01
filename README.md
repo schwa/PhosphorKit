@@ -13,7 +13,7 @@ Phosphor shaders. The Phosphor app builds its editor on top of it.
   `.phosphor` files.
 - **PhosphorCompile** — tree-sitter parsing, front-matter handling, source
   assembly, and Metal compilation. Owns `Phosphor.h`.
-- **PhosphorRuntime** — the live render pipeline (raw Metal), audio
+- **PhosphorRuntime** — the live render pipeline (Metal 4), audio
   capture, and the reusable `PhosphorView`.
 
 ## PhosphorView

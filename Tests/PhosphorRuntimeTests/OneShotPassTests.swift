@@ -146,25 +146,23 @@ struct OneShotPassRenderTests {
         descriptor.storageMode = .shared
         let target = try #require(device.makeTexture(descriptor: descriptor))
 
-        let renderer = PhosphorRenderer(device: device)
-        let queue = try #require(device.makeCommandQueue())
+        let renderer = try PhosphorRenderer(device: device)
+        let harness = try Metal4Harness(device: device)
         for frame in 0..<3 {
-            let commandBuffer = try #require(queue.makeCommandBuffer())
-            try renderer.render(
-                runtime: runtime,
-                into: commandBuffer,
-                targetTexture: target,
-                drawableSize: size,
-                builtin: BuiltinUniforms(
-                    time: Float(frame),
-                    timeDelta: 1,
-                    frame: Float(frame),
-                    resolution: SIMD2<Float>(1, 1)
+            try harness.run { commandBuffer in
+                try renderer.render(
+                    runtime: runtime,
+                    into: commandBuffer,
+                    targetTexture: target,
+                    drawableSize: size,
+                    builtin: BuiltinUniforms(
+                        time: Float(frame),
+                        timeDelta: 1,
+                        frame: Float(frame),
+                        resolution: SIMD2<Float>(1, 1)
+                    )
                 )
-            )
-            commandBuffer.commit()
-            commandBuffer.waitUntilCompleted()
-            #expect(commandBuffer.error == nil, "frame \(frame): \(String(describing: commandBuffer.error))")
+            }
         }
 
         var pixel = SIMD4<Float>(repeating: 0)

@@ -3,59 +3,53 @@ import Metal
 import PhosphorCompile
 import PhosphorModel
 
-/// Raw-Metal render driver for a ``PhosphorRuntime``.
+/// Metal 4 render driver for a ``PhosphorRuntime``.
 ///
-/// Replaces the previous MetalSprockets-based `PhosphorPipeline`: it owns the
-/// compute pipeline-state cache and the per-frame encode loop, and is
-/// *view-agnostic* — the caller supplies a command buffer and a target texture
-/// (a drawable's texture, or any offscreen render target). PhosphorKit's
-/// ``PhosphorView`` drives it from an `MTKView`; the Phosphor app drives the
-/// same renderer from inside a MetalSprockets `RenderView`.
+/// Replaces the previous raw-Metal-3 driver: it owns the compute pipeline-state
+/// cache and the per-frame encode loop, and is *view-agnostic* — the caller
+/// supplies an `MTL4CommandBuffer` (already begun) and a target texture. The
+/// renderer builds a per-frame residency set and applies it to the command
+/// buffer, so the caller does not manage residency.
+///
+/// Metal 4 has no automatic hazard tracking: the renderer orders dependent
+/// compute passes with intra-encoder barriers, and orders the final billboard
+/// draw after all compute work with a producer barrier.
 ///
 /// Ping-pong parity is derived from the frame counter — even frames use parity
-/// A, odd frames parity B — matching the old pipeline exactly. No cross-frame
-/// state lives here beyond the pipeline-state cache.
+/// A, odd frames parity B. No cross-frame state lives here beyond the pipeline
+/// caches.
 public final class PhosphorRenderer {
     private let device: MTLDevice
+    private let compiler: MTL4Compiler
 
-    /// Cached compute pipeline states keyed by pass id. Built lazily on first
-    /// use; invalidated by ``invalidatePipelineStates()`` on reload.
     private var computePipelineStates: [ResourceID: MTLComputePipelineState] = [:]
-
-    /// The library/functions the cache was built against. If the runtime's
-    /// library identity changes (recompile), the cache is dropped.
     private var cachedLibrary: MTLLibrary?
 
-    private lazy var billboard: BillboardPipeline? = try? BillboardPipeline(device: device)
+    private lazy var billboard: BillboardPipeline? = try? BillboardPipeline(device: device, compiler: compiler)
 
-    public init(device: MTLDevice) {
+    /// Keeps recent per-frame residency sets alive until their GPU work retires.
+    private var residencyRing: [MTLResidencySet] = []
+    private static let residencyRingDepth = 4
+
+    public init(device: MTLDevice) throws {
         self.device = device
+        self.compiler = try device.makeCompiler(descriptor: MTL4CompilerDescriptor())
     }
 
-    /// Drops cached compute pipeline states. Call after the runtime recompiles
-    /// (its `passFunctions` / `library` change).
+    /// Drops cached compute pipeline states. Call after the runtime recompiles.
     public func invalidatePipelineStates() {
         computePipelineStates.removeAll()
         cachedLibrary = nil
     }
 
-    /// Encodes one full frame: every enabled compute pass, then a billboard
-    /// blit of the output texture into `targetTexture`.
+    /// Encodes one full frame into `commandBuffer`: every enabled compute pass,
+    /// then a billboard blit of the output texture into `targetTexture`.
     ///
-    /// - Parameters:
-    ///   - runtime: GPU state (textures, functions, per-pass uniforms buffers).
-    ///   - commandBuffer: command buffer to encode into. The caller commits and
-    ///     presents.
-    ///   - targetTexture: final render target (the drawable's texture).
-    ///   - drawableSize: pixel size of the target; drives texture allocation.
-    ///   - builtin: builtin uniforms for this frame (`resized`/audio filled in
-    ///     by the runtime).
-    ///   - userUniformValues: user uniform overrides for this frame.
-    ///   - displayedResource: resource id whose write target gets blitted;
-    ///     defaults to `configuration.output`.
+    /// The caller must have already called `beginCommandBuffer(allocator:)` and
+    /// is responsible for `endCommandBuffer()`, committing, and presenting.
     public func render(
         runtime: PhosphorRuntime,
-        into commandBuffer: MTLCommandBuffer,
+        into commandBuffer: MTL4CommandBuffer,
         targetTexture: MTLTexture,
         drawableSize: CGSize,
         builtin: BuiltinUniforms,
@@ -65,39 +59,60 @@ public final class PhosphorRenderer {
         try? runtime.ensureTextures(drawableSize: drawableSize)
         runtime.writeAudioBuffers()
         runtime.writeUserUniforms(userUniformValues)
+        billboard?.beginFrame()
 
-        // Drop the pipeline cache if the runtime recompiled under us.
         if cachedLibrary !== runtime.library {
             computePipelineStates.removeAll()
             cachedLibrary = runtime.library
         }
 
-        // Parity for every ping-pong texture, derived from the frame count.
-        // Non-ping-pong textures get an entry (always true) so lookups don't
-        // special-case them.
         let isEvenFrame = (UInt64(builtin.frame) % 2) == 0
         var parityByResource: [ResourceID: Bool] = [:]
         for texture in runtime.configuration.textures {
             parityByResource[texture.id] = (texture.swap != .none) ? isEvenFrame : true
         }
-        let useLists = runtime.writePassUniforms(builtin: builtin, parity: parityByResource)
-
-        // One-shot passes are skipped except on the first frame after their
-        // state was invalidated (reload, reset, or texture reallocation).
+        _ = runtime.writePassUniforms(builtin: builtin, parity: parityByResource)
         let runOneShotPasses = runtime.consumeOneShotPasses()
 
-        for pass in runtime.configuration.passes where pass.enabled {
-            if pass.once, !runOneShotPasses { continue }
-            try encodeComputePass(
-                pass,
-                runtime: runtime,
-                commandBuffer: commandBuffer,
-                parity: parityByResource,
-                useResources: useLists[pass.id] ?? []
-            )
+        // Residency: everything a dispatch or draw reaches, directly or through
+        // the Uniforms argument buffer. Metal 4 does not infer this.
+        var residentAllocations: [MTLAllocation] = [
+            runtime.userUniformsBuffer,
+            runtime.waveformBuffer,
+            runtime.spectrumBuffer,
+            runtime.fallbackTexture,
+            targetTexture
+        ]
+        for (_, pair) in runtime.textures {
+            residentAllocations.append(pair.a)
+            if pair.pingPong { residentAllocations.append(pair.b) }
         }
 
-        // Billboard the chosen output's write target into the drawable.
+        let encodedPasses = runtime.configuration.passes.filter { $0.enabled && (!$0.once || runOneShotPasses) }
+
+        if let encoder = commandBuffer.makeComputeCommandEncoder() {
+            for (passIndex, pass) in encodedPasses.enumerated() {
+                if let passBuffer = runtime.passUniformsBuffer(for: pass.id) {
+                    residentAllocations.append(passBuffer)
+                }
+                try encodeComputePass(
+                    pass,
+                    runtime: runtime,
+                    encoder: encoder,
+                    parity: parityByResource
+                )
+                // Order the next pass after this one; a later pass may read a
+                // texture this pass wrote.
+                if passIndex < encodedPasses.count - 1 {
+                    encoder.barrier(afterEncoderStages: .dispatch, beforeEncoderStages: .dispatch, visibilityOptions: .device)
+                }
+            }
+            // Order the billboard draw after all compute work.
+            encoder.barrier(afterStages: .dispatch, beforeQueueStages: [.vertex, .fragment], visibilityOptions: .device)
+            encoder.endEncoding()
+        }
+
+        // Billboard the chosen output's write target into the target texture.
         let outputResourceID: ResourceID = {
             if let chosen = displayedResource, runtime.textures[chosen] != nil {
                 return chosen
@@ -106,17 +121,43 @@ public final class PhosphorRenderer {
         }()
         if let outputTexture = runtime.textures[outputResourceID]?.writeTexture(currentIsA: parityByResource[outputResourceID] ?? true),
            let billboard {
-            billboard.encode(
-                into: commandBuffer,
-                source: outputTexture,
-                target: targetTexture,
-                flipY: runtime.configuration.flipY
-            )
+            residentAllocations.append(contentsOf: billboard.residentAllocations())
+            applyResidency(residentAllocations, to: commandBuffer)
+
+            let renderPass = MTL4RenderPassDescriptor()
+            renderPass.colorAttachments[0].texture = targetTexture
+            renderPass.colorAttachments[0].loadAction = .clear
+            renderPass.colorAttachments[0].storeAction = .store
+            renderPass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+            if let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPass) {
+                billboard.encode(into: encoder, source: outputTexture, targetPixelFormat: targetTexture.pixelFormat, flipY: runtime.configuration.flipY)
+                encoder.endEncoding()
+            }
+        } else {
+            applyResidency(residentAllocations, to: commandBuffer)
         }
     }
 
-    /// Finds the texture a pass writes to (its first `.write`/`.readWrite`
-    /// binding); the dispatch grid matches that texture's dimensions.
+    private func applyResidency(_ allocations: [MTLAllocation], to commandBuffer: MTL4CommandBuffer) {
+        guard let set = try? device.makeResidencySet(descriptor: {
+            let descriptor = MTLResidencySetDescriptor()
+            descriptor.label = "Phosphor.Residency"
+            return descriptor
+        }()) else {
+            return
+        }
+        for allocation in allocations {
+            set.addAllocation(allocation)
+        }
+        set.commit()
+        commandBuffer.useResidencySet(set)
+
+        residencyRing.append(set)
+        if residencyRing.count > Self.residencyRingDepth {
+            residencyRing.removeFirst(residencyRing.count - Self.residencyRingDepth)
+        }
+    }
+
     private func primaryWriteTexture(for pass: Pass, runtime: PhosphorRuntime, parity: [ResourceID: Bool]) -> MTLTexture? {
         guard let binding = pass.textures.first(where: { $0.access == .write || $0.access == .readWrite }) else {
             return nil
@@ -125,9 +166,18 @@ public final class PhosphorRenderer {
         return runtime.textures[binding.id]?.writeTexture(currentIsA: resourceParity)
     }
 
-    private func computePipelineState(for pass: Pass, function: MTLFunction) throws -> MTLComputePipelineState {
+    private func computePipelineState(for pass: Pass, name: String) throws -> MTLComputePipelineState {
         if let cached = computePipelineStates[pass.id] { return cached }
-        let state = try device.makeComputePipelineState(function: function)
+        guard let library = cachedLibrary else {
+            throw PhosphorRuntimeError.allocationFailed("compute pipeline \(pass.id.raw): no library")
+        }
+        let functionDescriptor = MTL4LibraryFunctionDescriptor()
+        functionDescriptor.library = library
+        functionDescriptor.name = name
+        let descriptor = MTL4ComputePipelineDescriptor()
+        descriptor.label = pass.id.raw
+        descriptor.computeFunctionDescriptor = functionDescriptor
+        let state = try compiler.makeComputePipelineState(descriptor: descriptor)
         computePipelineStates[pass.id] = state
         return state
     }
@@ -135,9 +185,8 @@ public final class PhosphorRenderer {
     private func encodeComputePass(
         _ pass: Pass,
         runtime: PhosphorRuntime,
-        commandBuffer: MTLCommandBuffer,
-        parity: [ResourceID: Bool],
-        useResources: [MTLTexture]
+        encoder: MTL4ComputeCommandEncoder,
+        parity: [ResourceID: Bool]
     ) throws {
         guard let function = runtime.passFunctions[pass.id],
               let dispatchTarget = primaryWriteTexture(for: pass, runtime: runtime, parity: parity),
@@ -145,27 +194,21 @@ public final class PhosphorRenderer {
             return
         }
 
-        let state = try computePipelineState(for: pass, function: function)
-        guard let encoder = commandBuffer.makeComputeCommandEncoder() else { return }
-        encoder.label = pass.id.raw
+        let state = try computePipelineState(for: pass, name: function.name)
         encoder.setComputePipelineState(state)
 
         // Generated kernels bind `uniforms` at buffer(0) and `userUniforms` at
         // buffer(1) by convention (see StarterTemplate.metal / Phosphor.h).
-        encoder.setBuffer(passBuffer, offset: 0, index: 0)
-        encoder.setBuffer(runtime.userUniformsBuffer, offset: 0, index: 1)
-
-        // Residency: the Uniforms argument buffer references these textures and
-        // the audio buffers via gpuResourceID / gpuAddress.
-        for texture in useResources {
-            encoder.useResource(texture, usage: [.read, .write])
-        }
-        encoder.useResource(runtime.waveformBuffer, usage: .read)
-        encoder.useResource(runtime.spectrumBuffer, usage: .read)
+        let tableDescriptor = MTL4ArgumentTableDescriptor()
+        tableDescriptor.maxBufferBindCount = 2
+        tableDescriptor.initializeBindings = true
+        let table = try device.makeArgumentTable(descriptor: tableDescriptor)
+        table.setAddress(passBuffer.gpuAddress, index: 0)
+        table.setAddress(runtime.userUniformsBuffer.gpuAddress, index: 1)
+        encoder.setArgumentTable(table)
 
         let threadsPerGrid = MTLSize(width: dispatchTarget.width, height: dispatchTarget.height, depth: 1)
         let threadsPerThreadgroup = MTLSize(width: 16, height: 16, depth: 1)
-        encoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
-        encoder.endEncoding()
+        encoder.dispatchThreads(threadsPerGrid: threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
     }
 }

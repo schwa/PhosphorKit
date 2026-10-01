@@ -73,19 +73,17 @@ struct RenderSmokeTests {
         targetDescriptor.storageMode = .private
         let target = try #require(device.makeTexture(descriptor: targetDescriptor))
 
-        let renderer = PhosphorRenderer(device: device)
-        let queue = try #require(device.makeCommandQueue())
-        let commandBuffer = try #require(queue.makeCommandBuffer())
-        try renderer.render(
-            runtime: runtime,
-            into: commandBuffer,
-            targetTexture: target,
-            drawableSize: size,
-            builtin: uniforms
-        )
-        commandBuffer.commit()
-        commandBuffer.waitUntilCompleted()
-        #expect(commandBuffer.error == nil, "\(name) frame error: \(String(describing: commandBuffer.error))")
+        let renderer = try PhosphorRenderer(device: device)
+        let harness = try Metal4Harness(device: device)
+        try harness.run { commandBuffer in
+            try renderer.render(
+                runtime: runtime,
+                into: commandBuffer,
+                targetTexture: target,
+                drawableSize: size,
+                builtin: uniforms
+            )
+        }
         #expect(target.width == Int(size.width))
         #expect(target.height == Int(size.height))
     }

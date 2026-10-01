@@ -17,7 +17,7 @@ import SwiftUI
 /// `Plasma.phosphor` (falling back to `Plasma.metal`). The source is read in
 /// `init`; a missing resource is a programmer error and traps.
 ///
-/// Rendering is raw Metal hosted in an `MTKView` (no MetalSprockets), so an app
+/// Rendering is Metal 4 hosted in an `MTKView` (no MetalSprockets), so an app
 /// can embed a `.phosphor` file, link only PhosphorKit, and call
 /// `PhosphorView(named:)`.
 public struct PhosphorView: View {
@@ -143,8 +143,17 @@ private struct MetalRenderView {
     final class Coordinator: NSObject, MTKViewDelegate {
         private let runtime: PhosphorRuntime
         private let makeUniforms: (CGSize) -> BuiltinUniforms
-        private let renderer: PhosphorRenderer
-        private let commandQueue: MTLCommandQueue?
+        private let renderer: PhosphorRenderer?
+        private let commandQueue: MTL4CommandQueue?
+
+        // Ring of command-buffer slots so an allocator is never reset while its
+        // previous submission is still in flight. `inFlight` bounds live frames
+        // to the slot count; each slot's completion signals it.
+        private static let slotCount = 3
+        private let allocators: [MTL4CommandAllocator]
+        private let commandBuffers: [MTL4CommandBuffer]
+        private let inFlight = DispatchSemaphore(value: slotCount)
+        private var slotIndex = 0
 
         private var playbackClock = PlaybackClock()
         private var frameIndex: UInt32 = 0
@@ -154,8 +163,23 @@ private struct MetalRenderView {
         init(runtime: PhosphorRuntime, makeUniforms: @escaping (CGSize) -> BuiltinUniforms) {
             self.runtime = runtime
             self.makeUniforms = makeUniforms
-            self.renderer = PhosphorRenderer(device: runtime.device)
-            self.commandQueue = runtime.device.makeCommandQueue()
+            let device = runtime.device
+            self.renderer = try? PhosphorRenderer(device: device)
+            self.commandQueue = try? device.makeMTL4CommandQueue()
+            var allocators: [MTL4CommandAllocator] = []
+            var commandBuffers: [MTL4CommandBuffer] = []
+            for index in 0..<Self.slotCount {
+                let descriptor = MTL4CommandAllocatorDescriptor()
+                descriptor.label = "Phosphor.Allocator.\(index)"
+                if let allocator = try? device.makeCommandAllocator(descriptor: descriptor),
+                   let commandBuffer = device.makeCommandBuffer() {
+                    commandBuffer.label = "Phosphor.CommandBuffer.\(index)"
+                    allocators.append(allocator)
+                    commandBuffers.append(commandBuffer)
+                }
+            }
+            self.allocators = allocators
+            self.commandBuffers = commandBuffers
         }
 
         func mtkView(_: MTKView, drawableSizeWillChange _: CGSize) {}
@@ -163,11 +187,20 @@ private struct MetalRenderView {
         func draw(in view: MTKView) {
             guard let drawable = view.currentDrawable,
                   let commandQueue,
-                  let commandBuffer = commandQueue.makeCommandBuffer() else {
+                  let renderer,
+                  allocators.count == Self.slotCount else {
                 return
             }
             let drawableSize = view.drawableSize
             guard drawableSize.width > 0, drawableSize.height > 0 else { return }
+
+            inFlight.wait()
+            let slot = slotIndex
+            slotIndex = (slotIndex + 1) % Self.slotCount
+            let allocator = allocators[slot]
+            let commandBuffer = commandBuffers[slot]
+            allocator.reset()
+            commandBuffer.beginCommandBuffer(allocator: allocator)
 
             // Free-running wall clock; the playback clock applies pause/reset.
             let now = CACurrentMediaTime()
@@ -192,12 +225,21 @@ private struct MetalRenderView {
                     builtin: uniforms
                 )
             } catch {
-                commandBuffer.commit()
+                commandBuffer.endCommandBuffer()
+                inFlight.signal()
                 return
             }
 
-            commandBuffer.present(drawable)
-            commandBuffer.commit()
+            commandBuffer.endCommandBuffer()
+
+            let inFlight = inFlight
+            let options = MTL4CommitOptions()
+            options.addFeedbackHandler { _ in inFlight.signal() }
+
+            commandQueue.waitForDrawable(drawable)
+            commandQueue.commit([commandBuffer], options: options)
+            commandQueue.signalDrawable(drawable)
+            drawable.present()
             frameIndex &+= 1
         }
     }

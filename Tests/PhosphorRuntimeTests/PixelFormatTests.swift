@@ -97,8 +97,17 @@ struct PixelFormatTests {
         }
         """
         let library = try device.makeLibrary(source: source, options: nil)
-        let fill = try device.makeComputePipelineState(function: #require(library.makeFunction(name: "fill")))
-        let readBack = try device.makeComputePipelineState(function: #require(library.makeFunction(name: "readBack")))
+        let compiler = try device.makeCompiler(descriptor: MTL4CompilerDescriptor())
+        func pipeline(_ name: String) throws -> MTLComputePipelineState {
+            let functionDescriptor = MTL4LibraryFunctionDescriptor()
+            functionDescriptor.library = library
+            functionDescriptor.name = name
+            let descriptor = MTL4ComputePipelineDescriptor()
+            descriptor.computeFunctionDescriptor = functionDescriptor
+            return try compiler.makeComputePipelineState(descriptor: descriptor)
+        }
+        let fill = try pipeline("fill")
+        let readBack = try pipeline("readBack")
 
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: format.metalPixelFormat,
@@ -111,26 +120,42 @@ struct PixelFormatTests {
         let texture = try #require(device.makeTexture(descriptor: descriptor))
         let output = try #require(device.makeBuffer(length: 16, options: .storageModeShared))
 
-        let queue = try #require(device.makeCommandQueue())
-        let commandBuffer = try #require(queue.makeCommandBuffer())
         let one = MTLSize(width: 1, height: 1, depth: 1)
 
-        let fillEncoder = try #require(commandBuffer.makeComputeCommandEncoder())
-        fillEncoder.setComputePipelineState(fill)
-        fillEncoder.setTexture(texture, index: 0)
-        fillEncoder.dispatchThreads(one, threadsPerThreadgroup: one)
-        fillEncoder.endEncoding()
+        func textureTable() throws -> MTL4ArgumentTable {
+            let descriptor = MTL4ArgumentTableDescriptor()
+            descriptor.maxTextureBindCount = 1
+            descriptor.initializeBindings = true
+            let table = try device.makeArgumentTable(descriptor: descriptor)
+            table.setTexture(texture.gpuResourceID, index: 0)
+            return table
+        }
+        func readTable() throws -> MTL4ArgumentTable {
+            let descriptor = MTL4ArgumentTableDescriptor()
+            descriptor.maxTextureBindCount = 1
+            descriptor.maxBufferBindCount = 1
+            descriptor.initializeBindings = true
+            let table = try device.makeArgumentTable(descriptor: descriptor)
+            table.setTexture(texture.gpuResourceID, index: 0)
+            table.setAddress(output.gpuAddress, index: 0)
+            return table
+        }
+        let fillTable = try textureTable()
+        let readTableInstance = try readTable()
 
-        let readEncoder = try #require(commandBuffer.makeComputeCommandEncoder())
-        readEncoder.setComputePipelineState(readBack)
-        readEncoder.setTexture(texture, index: 0)
-        readEncoder.setBuffer(output, offset: 0, index: 0)
-        readEncoder.dispatchThreads(one, threadsPerThreadgroup: one)
-        readEncoder.endEncoding()
-
-        commandBuffer.commit()
-        commandBuffer.waitUntilCompleted()
-        #expect(commandBuffer.error == nil, "\(format): \(String(describing: commandBuffer.error))")
+        let harness = try Metal4Harness(device: device)
+        try harness.run(resident: [texture, output]) { commandBuffer in
+            if let fillEncoder = commandBuffer.makeComputeCommandEncoder() {
+                fillEncoder.setComputePipelineState(fill)
+                fillEncoder.setArgumentTable(fillTable)
+                fillEncoder.dispatchThreads(threadsPerGrid: one, threadsPerThreadgroup: one)
+                fillEncoder.barrier(afterEncoderStages: .dispatch, beforeEncoderStages: .dispatch, visibilityOptions: .device)
+                fillEncoder.setComputePipelineState(readBack)
+                fillEncoder.setArgumentTable(readTableInstance)
+                fillEncoder.dispatchThreads(threadsPerGrid: one, threadsPerThreadgroup: one)
+                fillEncoder.endEncoding()
+            }
+        }
 
         let pixel = output.contents().bindMemory(to: Float.self, capacity: 4)
         // Loose tolerance: the packed and 8-bit formats quantise.

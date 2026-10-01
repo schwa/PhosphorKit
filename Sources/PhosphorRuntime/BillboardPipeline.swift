@@ -3,64 +3,90 @@ import Metal
 
 /// Full-screen texture blit, replacing MetalSprocketsAddOns'
 /// `TextureBillboardPipeline`. Draws `source` into `target` with a built-in
-/// full-screen-triangle shader (see `Resources/Billboard.metal`).
+/// full-screen-triangle shader (see `Resources/Billboard.metal`). Metal 4.
 final class BillboardPipeline {
     private let device: MTLDevice
-    private let vertexFunction: MTLFunction
-    private let fragmentFunction: MTLFunction
+    private let compiler: MTL4Compiler
+    private let library: MTLLibrary
 
     /// Render pipeline states cached per color-attachment pixel format, since
-    /// the target texture's format isn't known until encode time (drawable vs.
-    /// MetalSprockets render target may differ).
+    /// the target texture's format isn't known until encode time.
     private var pipelineStates: [MTLPixelFormat: MTLRenderPipelineState] = [:]
+
+    /// Fresh per-encode uniforms buffers, held until the next encode so the GPU
+    /// finishes reading them.
+    private var uniformsBuffers: [MTLBuffer] = []
 
     /// Matches `BillboardUniforms` in Billboard.metal.
     private struct Uniforms {
         var flipY: UInt32
     }
 
-    init(device: MTLDevice) throws {
+    init(device: MTLDevice, compiler: MTL4Compiler) throws {
         self.device = device
-        let library = try device.makeDefaultLibrary(bundle: .module)
-        guard let vertexFunction = library.makeFunction(name: "phosphor_billboard_vertex"),
-              let fragmentFunction = library.makeFunction(name: "phosphor_billboard_fragment") else {
+        self.compiler = compiler
+        self.library = try device.makeDefaultLibrary(bundle: .module)
+        guard library.makeFunction(name: "phosphor_billboard_vertex") != nil,
+              library.makeFunction(name: "phosphor_billboard_fragment") != nil else {
             throw BillboardError.missingFunction
         }
-        self.vertexFunction = vertexFunction
-        self.fragmentFunction = fragmentFunction
+    }
+
+    private func functionDescriptor(_ name: String) -> MTL4LibraryFunctionDescriptor {
+        let descriptor = MTL4LibraryFunctionDescriptor()
+        descriptor.library = library
+        descriptor.name = name
+        return descriptor
     }
 
     private func pipelineState(for pixelFormat: MTLPixelFormat) throws -> MTLRenderPipelineState {
         if let cached = pipelineStates[pixelFormat] { return cached }
-        let descriptor = MTLRenderPipelineDescriptor()
+        let descriptor = MTL4RenderPipelineDescriptor()
         descriptor.label = "Phosphor.Billboard"
-        descriptor.vertexFunction = vertexFunction
-        descriptor.fragmentFunction = fragmentFunction
+        descriptor.vertexFunctionDescriptor = functionDescriptor("phosphor_billboard_vertex")
+        descriptor.fragmentFunctionDescriptor = functionDescriptor("phosphor_billboard_fragment")
         descriptor.colorAttachments[0].pixelFormat = pixelFormat
-        let state = try device.makeRenderPipelineState(descriptor: descriptor)
+        let state = try compiler.makeRenderPipelineState(descriptor: descriptor)
         pipelineStates[pixelFormat] = state
         return state
     }
 
-    /// Encodes the blit into `commandBuffer`. The render pass clears the target
-    /// to transparent before drawing the full-screen triangle.
-    func encode(into commandBuffer: MTLCommandBuffer, source: MTLTexture, target: MTLTexture, flipY: Bool) {
-        let renderPass = MTLRenderPassDescriptor()
-        renderPass.colorAttachments[0].texture = target
-        renderPass.colorAttachments[0].loadAction = .clear
-        renderPass.colorAttachments[0].storeAction = .store
-        renderPass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+    /// Allocations this pipeline needs resident for the current frame.
+    func residentAllocations() -> [MTLAllocation] {
+        uniformsBuffers
+    }
 
-        guard let pipelineState = try? pipelineState(for: target.pixelFormat),
-              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPass) else { return }
+    /// Call once per frame, before encoding, to release the previous frame's
+    /// uniforms buffers.
+    func beginFrame() {
+        uniformsBuffers.removeAll(keepingCapacity: true)
+    }
+
+    /// Encodes the blit into `encoder`. The caller opens the render encoder with
+    /// a pass that targets `target`; this binds the pipeline, the source texture
+    /// and the flip flag, then draws the full-screen triangle.
+    func encode(into encoder: MTL4RenderCommandEncoder, source: MTLTexture, targetPixelFormat: MTLPixelFormat, flipY: Bool) {
+        guard let pipelineState = try? pipelineState(for: targetPixelFormat),
+              let uniformsBuffer = device.makeBuffer(length: MemoryLayout<Uniforms>.stride, options: .storageModeShared) else {
+            return
+        }
+        uniformsBuffer.label = "Phosphor.Billboard.Uniforms"
+        uniformsBuffer.contents().storeBytes(of: Uniforms(flipY: flipY ? 1 : 0), as: Uniforms.self)
+        uniformsBuffers.append(uniformsBuffer)
+
         encoder.label = "Phosphor.Billboard"
         encoder.setRenderPipelineState(pipelineState)
 
-        var uniforms = Uniforms(flipY: flipY ? 1 : 0)
-        encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
-        encoder.setFragmentTexture(source, index: 0)
-        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
-        encoder.endEncoding()
+        let tableDescriptor = MTL4ArgumentTableDescriptor()
+        tableDescriptor.maxBufferBindCount = 1
+        tableDescriptor.maxTextureBindCount = 1
+        tableDescriptor.initializeBindings = true
+        guard let table = try? device.makeArgumentTable(descriptor: tableDescriptor) else { return }
+        table.setAddress(uniformsBuffer.gpuAddress, index: 0)
+        table.setTexture(source.gpuResourceID, index: 0)
+        encoder.setArgumentTable(table, stages: [.vertex, .fragment])
+
+        encoder.drawPrimitives(primitiveType: .triangle, vertexStart: 0, vertexCount: 3)
     }
 
     enum BillboardError: Error {
