@@ -89,7 +89,6 @@ public final class PhosphorRenderer {
         // stable resources (same objects every frame -> persistent set) and
         // dynamic ones (drawable + fresh per-frame uniform buffers).
         var stableAllocations: [MTLAllocation] = [
-            runtime.userUniformsBuffer,
             runtime.waveformBuffer,
             runtime.spectrumBuffer,
             runtime.fallbackTexture
@@ -98,9 +97,13 @@ public final class PhosphorRenderer {
             stableAllocations.append(pair.a)
             if pair.pingPong { stableAllocations.append(pair.b) }
         }
-        // The drawable is a fresh texture most frames (the layer does not
-        // recycle a small pool here), so it stays in the per-frame set.
-        var dynamicAllocations: [MTLAllocation] = [targetTexture]
+        // Per-frame resources: the drawable (a fresh texture most frames, the
+        // layer does not recycle a small pool here) and the user-uniforms
+        // buffer (reallocated every frame to dodge in-flight write races).
+        var dynamicAllocations: [MTLAllocation] = [
+            targetTexture,
+            runtime.userUniformsBuffer
+        ]
 
         let encodedPasses = runtime.configuration.passes.filter { $0.enabled && (!$0.once || runOneShotPasses) }
 
