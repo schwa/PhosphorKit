@@ -57,3 +57,17 @@ created: 2026-10-02T21:23:47Z
 Barriers in PhosphorRenderer only order work inside one frame. Frame N+1's compute passes write ping-pong textures that frame N's compute or billboard may still read. MTL4 does not serialize command buffers by commit order, so feedback shaders can read stale or partly written data. No queue barrier exists at frame start.
 
 ---
+
+## 5: Residency set rebuilt every frame instead of a persistent queue set
+
++++
+status: new
+priority: low
+kind: enhancement
+labels: metal4
+created: 2026-10-02T21:23:47Z
++++
+
+applyResidency creates and commits a new MTLResidencySet every frame. This costs CPU each frame and is not the recommended pattern (a long-lived set on the queue, changed only when allocations change). The drawable texture is added per frame; CAMetalLayer.residencySet is not used. residencyRingDepth (4) is not tied to the view's slotCount (3).
+
+---
