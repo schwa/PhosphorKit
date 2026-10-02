@@ -41,6 +41,12 @@ public final class PhosphorRenderer {
     private var stableResidencySet: MTLResidencySet?
     private var stableResidencySignature: Set<ObjectIdentifier> = []
 
+    /// Drawable textures seen so far. A `CAMetalLayer` rotates through a small
+    /// fixed pool, so accumulating them lets the stable set absorb the drawable
+    /// too: after the pool warms up the membership stops changing and no
+    /// per-frame residency churn remains for it.
+    private var seenDrawables: [ObjectIdentifier: MTLTexture] = [:]
+
     public init(device: MTLDevice) throws {
         self.device = device
         self.compiler = try device.makeCompiler(descriptor: MTL4CompilerDescriptor())
@@ -98,7 +104,10 @@ public final class PhosphorRenderer {
             stableAllocations.append(pair.a)
             if pair.pingPong { stableAllocations.append(pair.b) }
         }
-        var dynamicAllocations: [MTLAllocation] = [targetTexture]
+        // Fold the drawable into the stable set via the accumulated pool.
+        seenDrawables[ObjectIdentifier(targetTexture)] = targetTexture
+        for drawable in seenDrawables.values { stableAllocations.append(drawable) }
+        var dynamicAllocations: [MTLAllocation] = []
 
         let encodedPasses = runtime.configuration.passes.filter { $0.enabled && (!$0.once || runOneShotPasses) }
 
