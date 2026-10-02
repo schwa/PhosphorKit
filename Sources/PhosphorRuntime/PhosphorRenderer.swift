@@ -8,8 +8,9 @@ import PhosphorModel
 /// Replaces the previous raw-Metal-3 driver: it owns the compute pipeline-state
 /// cache and the per-frame encode loop, and is *view-agnostic* — the caller
 /// supplies an `MTL4CommandBuffer` (already begun) and a target texture. The
-/// renderer builds a per-frame residency set and applies it to the command
-/// buffer, so the caller does not manage residency.
+/// renderer keeps a persistent residency set for long-lived resources and a
+/// small per-frame set for the drawable and fresh per-frame uniform buffers,
+/// so the caller does not manage residency.
 ///
 /// Metal 4 has no automatic hazard tracking: the renderer orders dependent
 /// compute passes with intra-encoder barriers, and orders the final billboard
@@ -27,9 +28,18 @@ public final class PhosphorRenderer {
 
     private lazy var billboard: BillboardPipeline? = try? BillboardPipeline(device: device, compiler: compiler)
 
-    /// Keeps recent per-frame residency sets alive until their GPU work retires.
+    /// Keeps recent per-frame (dynamic) residency sets and retired stable sets
+    /// alive until their GPU work retires.
     private var residencyRing: [MTLResidencySet] = []
     private static let residencyRingDepth = 4
+
+    /// Persistent residency set for long-lived resources (uniform/audio
+    /// buffers, fallback texture, ping-pong textures). Rebuilt only when its
+    /// membership changes (resize or recompile), not every frame, to avoid the
+    /// per-frame addAllocation/removeAllocation churn Metal 4's automatic
+    /// submission-scoped residency would otherwise cause.
+    private var stableResidencySet: MTLResidencySet?
+    private var stableResidencySignature: Set<ObjectIdentifier> = []
 
     public init(device: MTLDevice) throws {
         self.device = device
@@ -75,25 +85,27 @@ public final class PhosphorRenderer {
         let runOneShotPasses = runtime.consumeOneShotPasses()
 
         // Residency: everything a dispatch or draw reaches, directly or through
-        // the Uniforms argument buffer. Metal 4 does not infer this.
-        var residentAllocations: [MTLAllocation] = [
+        // the Uniforms argument buffer. Metal 4 does not infer this. Split into
+        // stable resources (same objects every frame -> persistent set) and
+        // dynamic ones (drawable + fresh per-frame uniform buffers).
+        var stableAllocations: [MTLAllocation] = [
             runtime.userUniformsBuffer,
             runtime.waveformBuffer,
             runtime.spectrumBuffer,
-            runtime.fallbackTexture,
-            targetTexture
+            runtime.fallbackTexture
         ]
         for (_, pair) in runtime.textures {
-            residentAllocations.append(pair.a)
-            if pair.pingPong { residentAllocations.append(pair.b) }
+            stableAllocations.append(pair.a)
+            if pair.pingPong { stableAllocations.append(pair.b) }
         }
+        var dynamicAllocations: [MTLAllocation] = [targetTexture]
 
         let encodedPasses = runtime.configuration.passes.filter { $0.enabled && (!$0.once || runOneShotPasses) }
 
         if let encoder = commandBuffer.makeComputeCommandEncoder() {
             for (passIndex, pass) in encodedPasses.enumerated() {
                 if let passBuffer = runtime.passUniformsBuffer(for: pass.id) {
-                    residentAllocations.append(passBuffer)
+                    dynamicAllocations.append(passBuffer)
                 }
                 try encodeComputePass(
                     pass,
@@ -121,8 +133,8 @@ public final class PhosphorRenderer {
         }()
         if let outputTexture = runtime.textures[outputResourceID]?.writeTexture(currentIsA: parityByResource[outputResourceID] ?? true),
            let billboard {
-            residentAllocations.append(contentsOf: billboard.residentAllocations())
-            applyResidency(residentAllocations, to: commandBuffer)
+            dynamicAllocations.append(contentsOf: billboard.residentAllocations())
+            applyResidency(stable: stableAllocations, dynamic: dynamicAllocations, to: commandBuffer)
 
             let renderPass = MTL4RenderPassDescriptor()
             renderPass.colorAttachments[0].texture = targetTexture
@@ -134,28 +146,57 @@ public final class PhosphorRenderer {
                 encoder.endEncoding()
             }
         } else {
-            applyResidency(residentAllocations, to: commandBuffer)
+            applyResidency(stable: stableAllocations, dynamic: dynamicAllocations, to: commandBuffer)
         }
     }
 
-    private func applyResidency(_ allocations: [MTLAllocation], to commandBuffer: MTL4CommandBuffer) {
-        guard let set = try? device.makeResidencySet(descriptor: {
-            let descriptor = MTLResidencySetDescriptor()
-            descriptor.label = "Phosphor.Residency"
-            return descriptor
-        }()) else {
-            return
+    private func applyResidency(stable: [MTLAllocation], dynamic: [MTLAllocation], to commandBuffer: MTL4CommandBuffer) {
+        if let stableSet = stableResidencySet(for: stable) {
+            commandBuffer.useResidencySet(stableSet)
+        }
+        if let dynamicSet = makeResidencySet(dynamic, label: "Phosphor.Residency.Dynamic") {
+            commandBuffer.useResidencySet(dynamicSet)
+            residencyRing.append(dynamicSet)
+            if residencyRing.count > Self.residencyRingDepth {
+                residencyRing.removeFirst(residencyRing.count - Self.residencyRingDepth)
+            }
+        }
+    }
+
+    /// Returns the persistent residency set for `allocations`, rebuilding it
+    /// only when the membership changed since the last frame. A retired set is
+    /// kept alive via `residencyRing` until in-flight work that used it retires.
+    private func stableResidencySet(for allocations: [MTLAllocation]) -> MTLResidencySet? {
+        let signature = Set(allocations.map { ObjectIdentifier($0 as AnyObject) })
+        if let set = stableResidencySet, signature == stableResidencySignature {
+            return set
+        }
+        guard let set = makeResidencySet(allocations, label: "Phosphor.Residency.Stable") else {
+            return nil
+        }
+        if let old = stableResidencySet {
+            residencyRing.append(old)
+            if residencyRing.count > Self.residencyRingDepth {
+                residencyRing.removeFirst(residencyRing.count - Self.residencyRingDepth)
+            }
+        }
+        stableResidencySet = set
+        stableResidencySignature = signature
+        return set
+    }
+
+    private func makeResidencySet(_ allocations: [MTLAllocation], label: String) -> MTLResidencySet? {
+        guard !allocations.isEmpty else { return nil }
+        let descriptor = MTLResidencySetDescriptor()
+        descriptor.label = label
+        guard let set = try? device.makeResidencySet(descriptor: descriptor) else {
+            return nil
         }
         for allocation in allocations {
             set.addAllocation(allocation)
         }
         set.commit()
-        commandBuffer.useResidencySet(set)
-
-        residencyRing.append(set)
-        if residencyRing.count > Self.residencyRingDepth {
-            residencyRing.removeFirst(residencyRing.count - Self.residencyRingDepth)
-        }
+        return set
     }
 
     private func primaryWriteTexture(for pass: Pass, runtime: PhosphorRuntime, parity: [ResourceID: Bool]) -> MTLTexture? {
