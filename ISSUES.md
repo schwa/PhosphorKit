@@ -71,3 +71,17 @@ created: 2026-10-02T21:23:47Z
 applyResidency creates and commits a new MTLResidencySet every frame. This costs CPU each frame and is not the recommended pattern (a long-lived set on the queue, changed only when allocations change). The drawable texture is added per frame; CAMetalLayer.residencySet is not used. residencyRingDepth (4) is not tied to the view's slotCount (3).
 
 ---
+
+## 6: zeroTexture creates a queue and blocks on every texture
+
++++
+status: new
+priority: low
+kind: enhancement
+labels: metal4
+created: 2026-10-02T21:23:47Z
++++
+
+PhosphorRuntime.zeroTexture makes a new MTL4CommandQueue, allocator, and residency set for each texture and waits synchronously for the GPU. Clearing many ping-pong textures does this once per texture. The residency set stays attached to the throwaway queue.
+
+---
