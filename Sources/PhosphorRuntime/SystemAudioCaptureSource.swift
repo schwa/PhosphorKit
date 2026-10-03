@@ -93,7 +93,7 @@ final class SystemAudioCaptureSource {
             self.storage = storage
         }
 
-        func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+        func stream(_: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
             guard type == .audio else { return }
             let storage = storage
             try? sampleBuffer.withAudioBufferList(blockBufferMemoryAllocator: nil) { list, _ in
@@ -104,7 +104,7 @@ final class SystemAudioCaptureSource {
             }
         }
 
-        func stream(_ stream: SCStream, didStopWithError error: Error) {
+        func stream(_: SCStream, didStopWithError error: Error) {
             SystemAudioCaptureSource.logger.error("system audio stream stopped: \(error, privacy: .public)")
         }
     }

@@ -302,6 +302,7 @@ extension PhosphorView {
     }
 }
 
+// swiftlint:disable:next closure_body_length
 #Preview("PhosphorView — triangle") {
     let source = """
     /* phosphor:environment

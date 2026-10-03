@@ -422,6 +422,7 @@ public enum ShadertoyTranslator {
 
     /// Splits a source around `mainImage`: everything before its signature,
     /// its body (without the outer braces), and everything after.
+    // swiftlint:disable:next large_tuple
     static func splitMainImage(_ source: String) -> (before: String, body: String, after: String)? {
         guard let regex = try? NSRegularExpression(pattern: mainImagePattern) else { return nil }
         let nsSource = source as NSString
@@ -447,6 +448,7 @@ public enum ShadertoyTranslator {
         while index < source.endIndex {
             switch source[index] {
             case "{": depth += 1
+
             case "}":
                 depth -= 1
                 if depth == 0 { return index }
@@ -552,6 +554,7 @@ public enum ShadertoyTranslator {
 }
 
 extension String {
+    // swiftlint:disable:next strict_fileprivate
     fileprivate var trimmed: String {
         trimmingCharacters(in: .whitespacesAndNewlines)
     }

@@ -18,7 +18,7 @@ public struct PhosphorDocument: Hashable, Sendable, Codable {
     /// The Metal kernel source, with no embedded front-matter.
     public var source: String
 
-    public init(version: Int = PhosphorDocument.currentVersion, configuration: PhosphorConfiguration, source: String) {
+    public init(version: Int = Self.currentVersion, configuration: PhosphorConfiguration, source: String) {
         self.version = version
         self.configuration = configuration
         self.source = source
@@ -26,7 +26,7 @@ public struct PhosphorDocument: Hashable, Sendable, Codable {
 
     /// Decodes a document from its JSON `data` representation.
     public init(jsonData data: Data) throws {
-        self = try JSONDecoder().decode(PhosphorDocument.self, from: data)
+        self = try JSONDecoder().decode(Self.self, from: data)
     }
 
     /// Encodes this document to pretty-printed, key-sorted JSON.

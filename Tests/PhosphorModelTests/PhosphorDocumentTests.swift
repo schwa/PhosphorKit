@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 @testable import PhosphorModel
+import Testing
 
 @Suite struct PhosphorDocumentTests {
     @Test func roundTripsThroughJSON() throws {
