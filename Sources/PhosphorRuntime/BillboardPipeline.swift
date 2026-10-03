@@ -13,9 +13,9 @@ final class BillboardPipeline {
     /// the target texture's format isn't known until encode time.
     private var pipelineStates: [MTLPixelFormat: MTLRenderPipelineState] = [:]
 
-    /// Fresh per-encode uniforms buffers, held until the next encode so the GPU
-    /// finishes reading them.
-    private var uniformsBuffers: [MTLBuffer] = []
+    /// This frame's uniforms buffer, allocated in `beginFrame()` so it can join
+    /// the residency set before `encode` binds it.
+    private var uniformsBuffer: MTLBuffer?
 
     /// Matches `BillboardUniforms` in Billboard.metal.
     private struct Uniforms {
@@ -53,13 +53,13 @@ final class BillboardPipeline {
 
     /// Allocations this pipeline needs resident for the current frame.
     func residentAllocations() -> [MTLAllocation] {
-        uniformsBuffers
+        uniformsBuffer.map { [$0] } ?? []
     }
 
-    /// Call once per frame, before encoding, to release the previous frame's
-    /// uniforms buffers.
+    /// Call once per frame, before building residency and encoding.
     func beginFrame() {
-        uniformsBuffers.removeAll(keepingCapacity: true)
+        uniformsBuffer = device.makeBuffer(length: MemoryLayout<Uniforms>.stride, options: .storageModeShared)
+        uniformsBuffer?.label = "Phosphor.Billboard.Uniforms"
     }
 
     /// Encodes the blit into `encoder`. The caller opens the render encoder with
@@ -67,12 +67,10 @@ final class BillboardPipeline {
     /// and the flip flag, then draws the full-screen triangle.
     func encode(into encoder: MTL4RenderCommandEncoder, source: MTLTexture, targetPixelFormat: MTLPixelFormat, flipY: Bool) {
         guard let pipelineState = try? pipelineState(for: targetPixelFormat),
-              let uniformsBuffer = device.makeBuffer(length: MemoryLayout<Uniforms>.stride, options: .storageModeShared) else {
+              let uniformsBuffer else {
             return
         }
-        uniformsBuffer.label = "Phosphor.Billboard.Uniforms"
         uniformsBuffer.contents().storeBytes(of: Uniforms(flipY: flipY ? 1 : 0), as: Uniforms.self)
-        uniformsBuffers.append(uniformsBuffer)
 
         encoder.label = "Phosphor.Billboard"
         encoder.setRenderPipelineState(pipelineState)

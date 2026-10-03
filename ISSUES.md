@@ -5,15 +5,18 @@
 ## 1: Billboard uniforms buffer missing from per-frame residency set
 
 +++
-status: open
+status: closed
 priority: high
 kind: bug
 labels: metal4, effort:xs
 created: 2026-10-02T21:23:47Z
-updated: 2026-10-03T15:16:04Z
+updated: 2026-10-03T15:17:04Z
+closed: 2026-10-03T15:17:04Z
 +++
 
 In PhosphorRenderer.render, billboard.residentAllocations() is called before billboard.encode(). beginFrame() has already cleared uniformsBuffers and encode() creates this frame's buffer afterward, so the buffer the draw reads is never in the residency set. Works today likely only because shared buffers happen to be resident.
+
+- `2026-10-03T15:17:04Z`: Billboard uniforms buffer now allocated in beginFrame(), before residency is built.
 
 ---
 
