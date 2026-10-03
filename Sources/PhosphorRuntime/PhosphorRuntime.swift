@@ -53,50 +53,21 @@ public final class PhosphorRuntime {
         resizedFlag = true
         oneShotPassesPending = true
         for (_, pair) in textures where pair.pingPong {
-            zeroTexture(pair.a)
-            zeroTexture(pair.b)
+            pendingClears.append(pair.a)
+            pendingClears.append(pair.b)
         }
     }
 
-    private func zeroTexture(_ texture: MTLTexture) {
-        // Every texture here was allocated from a PhosphorPixelFormat, so the
-        // reverse lookup succeeds; the fallback is the widest format, which
-        // over-allocates the zero buffer rather than under-filling the texture.
-        let bytesPerPixel = PhosphorPixelFormat(texture.pixelFormat)?.bytesPerPixel ?? 16
-        let bytesPerRow = texture.width * bytesPerPixel
-        let length = bytesPerRow * texture.height
-        guard length > 0,
-              let zero = device.makeBuffer(length: length, options: .storageModeShared),
-              let queue = try? device.makeMTL4CommandQueue(),
-              let allocator = try? device.makeCommandAllocator(descriptor: MTL4CommandAllocatorDescriptor()),
-              let commandBuffer = device.makeCommandBuffer() else {
-            return
-        }
-        memset(zero.contents(), 0, length)
+    /// Textures to zero at the start of the next frame, on that frame's
+    /// command buffer.
+    private var pendingClears: [MTLTexture] = []
 
-        let residency = try? device.makeResidencySet(descriptor: MTLResidencySetDescriptor())
-        residency?.addAllocation(texture)
-        residency?.addAllocation(zero)
-        residency?.commit()
-        if let residency { queue.addResidencySet(residency) }
-
-        commandBuffer.beginCommandBuffer(allocator: allocator)
-        guard let encoder = commandBuffer.makeComputeCommandEncoder() else { return }
-        encoder.copy(
-            sourceBuffer: zero, sourceOffset: 0, sourceBytesPerRow: bytesPerRow,
-            sourceBytesPerImage: length,
-            sourceSize: MTLSize(width: texture.width, height: texture.height, depth: 1),
-            destinationTexture: texture, destinationSlice: 0, destinationLevel: 0,
-            destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0)
-        )
-        encoder.endEncoding()
-        commandBuffer.endCommandBuffer()
-
-        let semaphore = DispatchSemaphore(value: 0)
-        let options = MTL4CommitOptions()
-        options.addFeedbackHandler { _ in semaphore.signal() }
-        queue.commit([commandBuffer], options: options)
-        semaphore.wait()
+    /// Returns the textures to clear this frame, dropping any that were
+    /// reallocated since the reset.
+    public func consumePendingClears() -> [MTLTexture] {
+        defer { pendingClears.removeAll() }
+        let live = Set(textures.values.flatMap { [ObjectIdentifier($0.a), ObjectIdentifier($0.b)] })
+        return pendingClears.filter { live.contains(ObjectIdentifier($0)) }
     }
 
     /// Per-pass uniforms buffers. Each pass gets its own MTLBuffer carrying

@@ -39,6 +39,7 @@ public final class PhosphorRenderer {
     /// per-frame addAllocation/removeAllocation churn Metal 4's automatic
     /// submission-scoped residency would otherwise cause.
     private var stableResidencySet: MTLResidencySet?
+    private var zeroBuffer: MTLBuffer?
     private var stableResidencySignature: Set<ObjectIdentifier> = []
 
     public init(device: MTLDevice) throws {
@@ -110,6 +111,11 @@ public final class PhosphorRenderer {
             // frame's compute and billboard work before touching the shared
             // ping-pong textures.
             encoder.barrier(afterQueueStages: [.dispatch, .vertex, .fragment], beforeStages: .dispatch, visibilityOptions: .device)
+            let clears = runtime.consumePendingClears()
+            if !clears.isEmpty, let zero = encodeClears(clears, encoder: encoder) {
+                dynamicAllocations.append(zero)
+                encoder.barrier(afterEncoderStages: .dispatch, beforeEncoderStages: .dispatch, visibilityOptions: .device)
+            }
             for (passIndex, pass) in encodedPasses.enumerated() {
                 if let passBuffer = runtime.passUniformsBuffer(for: pass.id) {
                     dynamicAllocations.append(passBuffer)
@@ -155,6 +161,35 @@ public final class PhosphorRenderer {
         } else {
             applyResidency(stable: stableAllocations, dynamic: dynamicAllocations, to: commandBuffer)
         }
+    }
+
+    /// Copies zeros into each texture. Returns the zero buffer, which must be
+    /// resident for this frame.
+    private func encodeClears(_ textures: [MTLTexture], encoder: MTL4ComputeCommandEncoder) -> MTLBuffer? {
+        // Every texture here was allocated from a PhosphorPixelFormat; the
+        // fallback is the widest format, which over-sizes rather than under-fills.
+        func layout(_ texture: MTLTexture) -> (bytesPerRow: Int, length: Int) {
+            let bytesPerRow = texture.width * (PhosphorPixelFormat(texture.pixelFormat)?.bytesPerPixel ?? 16)
+            return (bytesPerRow, bytesPerRow * texture.height)
+        }
+        let needed = textures.map { layout($0).length }.max() ?? 0
+        if (zeroBuffer?.length ?? 0) < needed {
+            zeroBuffer = device.makeBuffer(length: needed, options: .storageModeShared)
+            zeroBuffer?.label = "Phosphor.Zero"
+            if let zeroBuffer { memset(zeroBuffer.contents(), 0, zeroBuffer.length) }
+        }
+        guard let zeroBuffer else { return nil }
+        for texture in textures {
+            let (bytesPerRow, length) = layout(texture)
+            encoder.copy(
+                sourceBuffer: zeroBuffer, sourceOffset: 0, sourceBytesPerRow: bytesPerRow,
+                sourceBytesPerImage: length,
+                sourceSize: MTLSize(width: texture.width, height: texture.height, depth: 1),
+                destinationTexture: texture, destinationSlice: 0, destinationLevel: 0,
+                destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0)
+            )
+        }
+        return zeroBuffer
     }
 
     private func applyResidency(stable: [MTLAllocation], dynamic: [MTLAllocation], to commandBuffer: MTL4CommandBuffer) {

@@ -92,14 +92,17 @@ applyResidency creates and commits a new MTLResidencySet every frame. This costs
 ## 6: zeroTexture creates a queue and blocks on every texture
 
 +++
-status: open
+status: closed
 priority: low
 kind: enhancement
 labels: metal4, effort:s
 created: 2026-10-02T21:23:47Z
-updated: 2026-10-03T15:16:04Z
+updated: 2026-10-03T15:20:20Z
+closed: 2026-10-03T15:20:20Z
 +++
 
 PhosphorRuntime.zeroTexture makes a new MTL4CommandQueue, allocator, and residency set for each texture and waits synchronously for the GPU. Clearing many ping-pong textures does this once per texture. The residency set stays attached to the throwaway queue.
+
+- `2026-10-03T15:20:20Z`: signalReset() now queues ping-pong textures; the renderer zeroes them on the next frame's command buffer (after the frame queue barrier) from a cached zero buffer. No throwaway queue, no CPU wait. ResetClearTests guards the zeroing.
 
 ---
