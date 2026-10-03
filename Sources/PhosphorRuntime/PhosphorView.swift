@@ -164,7 +164,7 @@ private struct MetalRenderView {
             self.runtime = runtime
             self.makeUniforms = makeUniforms
             let device = runtime.device
-            self.renderer = try? PhosphorRenderer(device: device)
+            self.renderer = try? PhosphorRenderer(device: device, maxFramesInFlight: Self.slotCount)
             self.commandQueue = try? device.makeMTL4CommandQueue()
             var allocators: [MTL4CommandAllocator] = []
             var commandBuffers: [MTL4CommandBuffer] = []

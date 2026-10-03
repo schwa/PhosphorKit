@@ -28,10 +28,17 @@ public final class PhosphorRenderer {
 
     private lazy var billboard: BillboardPipeline? = try? BillboardPipeline(device: device, compiler: compiler)
 
-    /// Keeps recent per-frame (dynamic) residency sets and retired stable sets
-    /// alive until their GPU work retires.
-    private var residencyRing: [MTLResidencySet] = []
-    private static let residencyRingDepth = 4
+    /// Pooled per-frame residency sets, one per ring slot, refilled each frame.
+    /// Residency sets retain their allocations, so this also keeps per-frame
+    /// buffers alive until their frame completes (#2).
+    private var dynamicSets: [MTLResidencySet] = []
+    /// Replaced stable sets, kept until frames that used them complete.
+    private var retiredStableSets: [(set: MTLResidencySet, retiredAt: UInt64)] = []
+    private var frameCount: UInt64 = 0
+    private let residencyRingDepth: Int
+
+    /// Total residency sets created; tests check this stays bounded.
+    private(set) var residencySetsCreated = 0
 
     /// Persistent residency set for long-lived resources (uniform/audio
     /// buffers, fallback texture, ping-pong textures). Rebuilt only when its
@@ -42,8 +49,11 @@ public final class PhosphorRenderer {
     private var zeroBuffer: MTLBuffer?
     private var stableResidencySignature: Set<ObjectIdentifier> = []
 
-    public init(device: MTLDevice) throws {
+    /// `maxFramesInFlight` must be at least the caller's number of frames
+    /// submitted but not yet complete.
+    public init(device: MTLDevice, maxFramesInFlight: Int = 3) throws {
         self.device = device
+        self.residencyRingDepth = maxFramesInFlight + 1
         self.compiler = try device.makeCompiler(descriptor: MTL4CompilerDescriptor())
     }
 
@@ -196,18 +206,37 @@ public final class PhosphorRenderer {
         if let stableSet = stableResidencySet(for: stable) {
             commandBuffer.useResidencySet(stableSet)
         }
-        if let dynamicSet = makeResidencySet(dynamic, label: "Phosphor.Residency.Dynamic") {
+        if let dynamicSet = nextDynamicSet(dynamic) {
             commandBuffer.useResidencySet(dynamicSet)
-            residencyRing.append(dynamicSet)
-            if residencyRing.count > Self.residencyRingDepth {
-                residencyRing.removeFirst(residencyRing.count - Self.residencyRingDepth)
-            }
         }
+        frameCount += 1
+        retiredStableSets.removeAll { frameCount - $0.retiredAt > residencyRingDepth }
+    }
+
+    /// Refills the next pooled dynamic set. A slot comes round again only after
+    /// `residencyRingDepth` frames, by which time its previous frame has
+    /// completed, so emptying it is safe.
+    private func nextDynamicSet(_ allocations: [MTLAllocation]) -> MTLResidencySet? {
+        let slot = Int(frameCount % UInt64(residencyRingDepth))
+        if slot >= dynamicSets.count {
+            let descriptor = MTLResidencySetDescriptor()
+            descriptor.label = "Phosphor.Residency.Dynamic.\(slot)"
+            guard let set = try? device.makeResidencySet(descriptor: descriptor) else { return nil }
+            residencySetsCreated += 1
+            dynamicSets.append(set)
+        }
+        let set = dynamicSets[slot]
+        set.removeAllAllocations()
+        for allocation in allocations {
+            set.addAllocation(allocation)
+        }
+        set.commit()
+        return set
     }
 
     /// Returns the persistent residency set for `allocations`, rebuilding it
     /// only when the membership changed since the last frame. A retired set is
-    /// kept alive via `residencyRing` until in-flight work that used it retires.
+    /// kept alive in `retiredStableSets` until in-flight work that used it retires.
     private func stableResidencySet(for allocations: [MTLAllocation]) -> MTLResidencySet? {
         let signature = Set(allocations.map { ObjectIdentifier($0 as AnyObject) })
         if let set = stableResidencySet, signature == stableResidencySignature {
@@ -217,10 +246,7 @@ public final class PhosphorRenderer {
             return nil
         }
         if let old = stableResidencySet {
-            residencyRing.append(old)
-            if residencyRing.count > Self.residencyRingDepth {
-                residencyRing.removeFirst(residencyRing.count - Self.residencyRingDepth)
-            }
+            retiredStableSets.append((old, frameCount))
         }
         stableResidencySet = set
         stableResidencySignature = signature
@@ -234,6 +260,7 @@ public final class PhosphorRenderer {
         guard let set = try? device.makeResidencySet(descriptor: descriptor) else {
             return nil
         }
+        residencySetsCreated += 1
         for allocation in allocations {
             set.addAllocation(allocation)
         }

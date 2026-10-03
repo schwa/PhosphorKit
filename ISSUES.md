@@ -77,15 +77,18 @@ Barriers in PhosphorRenderer only order work inside one frame. Frame N+1's compu
 ## 5: Residency set rebuilt every frame instead of a persistent queue set
 
 +++
-status: open
+status: closed
 priority: low
 kind: enhancement
 labels: metal4, effort:m
 created: 2026-10-02T21:23:47Z
-updated: 2026-10-03T15:16:04Z
+updated: 2026-10-03T15:21:28Z
+closed: 2026-10-03T15:21:28Z
 +++
 
 applyResidency creates and commits a new MTLResidencySet every frame. This costs CPU each frame and is not the recommended pattern (a long-lived set on the queue, changed only when allocations change). The drawable texture is added per frame; CAMetalLayer.residencySet is not used. residencyRingDepth (4) is not tied to the view's slotCount (3).
+
+- `2026-10-03T15:21:28Z`: Dynamic residency sets now come from a fixed pool (maxFramesInFlight + 1) refilled each frame instead of being created per frame; retired stable sets are held for the same window. PhosphorRenderer(device:maxFramesInFlight:) ties the depth to PhosphorView's slotCount. Not done: attaching sets to the queue / CAMetalLayer.residencySet — the renderer doesn't own the queue and also renders to offscreen targets, so the drawable stays in the per-frame set. ResidencyReuseTests fails before (21 sets over 20 frames).
 
 ---
 
