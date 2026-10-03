@@ -23,15 +23,18 @@ In PhosphorRenderer.render, billboard.residentAllocations() is called before bil
 ## 2: Per-frame GPU resources released while frames are still in flight
 
 +++
-status: open
+status: closed
 priority: high
 kind: bug
 labels: metal4, effort:m
 created: 2026-10-02T21:23:47Z
-updated: 2026-10-03T15:16:04Z
+updated: 2026-10-03T15:18:22Z
+closed: 2026-10-03T15:18:22Z
 +++
 
 MTL4 command buffers do not retain resources. With up to 3 frames in flight, these are dropped before the GPU is done: BillboardPipeline.uniformsBuffers (cleared in beginFrame), pass uniforms buffers (rebuilt in writePassUniforms), userUniformsBuffer (replaced in writeUserUniforms every frame), and textures freed by ensureTextures on resize. residencyRing keeps residency sets alive but not their allocations.
+
+- `2026-10-03T15:18:22Z`: Not a bug: MTLResidencySet retains its allocations (verified: weak ref to a buffer added to a set stays non-nil until removeAllAllocations). residencyRing (depth 4 >= 3 in-flight slots) holds each frame's dynamic set and retired stable sets, so per-frame buffers and resized-away textures outlive in-flight frames. Added InFlightLifetimeTests as a guard. Ring depth vs slotCount coupling tracked in #5.
 
 ---
 
