@@ -4,13 +4,10 @@ import Metal
 import PhosphorModel
 import Testing
 
-@Suite("ShaderCompiler")
+@Suite("ShaderCompiler", .enabled(if: metalDeviceAvailable))
 struct ShaderCompilerTests {
     private func device() throws -> MTLDevice {
-        guard let device = MTLCreateSystemDefaultDevice() else {
-            throw TestSkip.noDevice
-        }
-        return device
+        try #require(MTLCreateSystemDefaultDevice())
     }
 
     private let cleanSource = """

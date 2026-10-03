@@ -116,10 +116,10 @@ struct StarterTemplateTests {
         #expect(parsed.configuration.passes.map(\.id) == ["image"])
     }
 
-    @Test("Compiles")
+    @Test("Compiles", .enabled(if: metalDeviceAvailable))
     @MainActor
     func compiles() throws {
-        guard let device = MTLCreateSystemDefaultDevice() else { throw TestSkip.noDevice }
+        let device = try #require(MTLCreateSystemDefaultDevice())
         let parsed = ParsedPhosphorSource(source: PhosphorStarterTemplate.source)
         let errors = ShaderCompiler.compile(parsed: parsed, device: device).diagnostics
         #expect(errors.isEmpty, "\(errors)")

@@ -4,11 +4,11 @@ import Testing
 
 /// #1: the uniforms buffer the billboard draw reads must be in the residency
 /// set, which the renderer builds between `beginFrame()` and `encode`.
-@Suite("Billboard residency")
+@Suite("Billboard residency", .enabled(if: metal4Available))
 struct BillboardResidencyTests {
     @Test("Uniforms buffer is resident before encode")
     func uniformsResidentBeforeEncode() throws {
-        guard let device = MTLCreateSystemDefaultDevice() else { throw TestSkip.noDevice }
+        let device = try #require(MTLCreateSystemDefaultDevice())
         let compiler = try device.makeCompiler(descriptor: MTL4CompilerDescriptor())
         let billboard = try BillboardPipeline(device: device, compiler: compiler)
 

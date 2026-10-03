@@ -35,10 +35,10 @@ struct PixelFormatTests {
     /// Checked against Metal by pushing a byte pattern through
     /// `replace`/`getBytes` at our computed stride: if the stride were wrong,
     /// the rows would shear and the bytes wouldn't come back unchanged.
-    @Test("bytesPerPixel matches Metal's row stride", arguments: PhosphorPixelFormat.allCases)
+    @Test("bytesPerPixel matches Metal's row stride", .enabled(if: metalDeviceAvailable), arguments: PhosphorPixelFormat.allCases)
     @MainActor
     func bytesPerPixelMatchesMetal(format: PhosphorPixelFormat) throws {
-        guard let device = MTLCreateSystemDefaultDevice() else { throw TestSkip.noDevice }
+        let device = try #require(MTLCreateSystemDefaultDevice())
         let width = 4
         let height = 4
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
@@ -78,10 +78,10 @@ struct PixelFormatTests {
 
     /// The real bar: allocate the format the way Phosphor does, have a compute
     /// kernel write to it, and read the value back.
-    @Test("Every declared format is writable and readable from a kernel", arguments: PhosphorPixelFormat.allCases)
+    @Test("Every declared format is writable and readable from a kernel", .enabled(if: metal4Available), arguments: PhosphorPixelFormat.allCases)
     @MainActor
     func formatSurvivesAKernelRoundTrip(format: PhosphorPixelFormat) throws {
-        guard let device = MTLCreateSystemDefaultDevice() else { throw TestSkip.noDevice }
+        let device = try #require(MTLCreateSystemDefaultDevice())
 
         let source = """
         #include <metal_stdlib>

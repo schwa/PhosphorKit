@@ -181,14 +181,14 @@ struct FrontMatterReferenceTests {
     }
 }
 
-@Suite("Palette usage example")
+@Suite("Palette usage example", .enabled(if: metalDeviceAvailable))
 struct PaletteExampleTests {
     /// The palette snippet in the reference has to parse and compile, since
     /// it's the only place the sampling idiom is written down (#123).
     @Test("The documented palette shader compiles")
     @MainActor
     func paletteExampleCompiles() throws {
-        guard let device = MTLCreateSystemDefaultDevice() else { throw TestSkip.noDevice }
+        let device = try #require(MTLCreateSystemDefaultDevice())
         let source = """
         /* phosphor:environment
         output = "image"

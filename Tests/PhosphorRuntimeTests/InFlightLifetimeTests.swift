@@ -7,12 +7,12 @@ import Testing
 
 /// #2: MTL4 command buffers don't retain resources, so the renderer must keep
 /// per-frame buffers alive while later frames are encoded.
-@Suite("In-flight resource lifetime")
+@Suite("In-flight resource lifetime", .enabled(if: metal4Available))
 struct InFlightLifetimeTests {
     @Test("Previous frame's per-frame buffers outlive the next frame's encode")
     @MainActor
     func perFrameBuffersRetained() throws {
-        guard let device = MTLCreateSystemDefaultDevice() else { throw TestSkip.noDevice }
+        let device = try #require(MTLCreateSystemDefaultDevice())
         let url = RenderSmokeTests.examplesDirectory.appendingPathComponent("Checkerboard.metal")
         let parsed = ParsedPhosphorSource(source: try String(contentsOf: url, encoding: .utf8))
         let runtime = PhosphorRuntime(configuration: parsed.configuration, source: parsed.body)

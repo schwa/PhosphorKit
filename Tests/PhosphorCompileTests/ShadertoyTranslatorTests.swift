@@ -182,10 +182,10 @@ struct ShadertoyTranslatorTests {
     // MARK: End to end
 
     /// The real bar: a translated shader has to survive the Metal compiler.
-    @Test("A translated shader compiles")
+    @Test("A translated shader compiles", .enabled(if: metalDeviceAvailable))
     @MainActor
     func translatedShaderCompiles() throws {
-        guard let device = MTLCreateSystemDefaultDevice() else { throw TestSkip.noDevice }
+        let device = try #require(MTLCreateSystemDefaultDevice())
         let parsed = ParsedPhosphorSource(source: Self.plaid)
         let compiled = ShaderCompiler.compile(parsed: parsed, device: device)
         let compileErrors = compiled.diagnostics.filter { diagnostic in
@@ -236,10 +236,10 @@ struct ShadertoyTranslatorTests {
         """)
     ]
 
-    @Test("Representative Shadertoy idioms translate and compile", arguments: idiomaticShaders)
+    @Test("Representative Shadertoy idioms translate and compile", .enabled(if: metalDeviceAvailable), arguments: idiomaticShaders)
     @MainActor
     func idiomsCompile(shader: (name: String, source: String)) throws {
-        guard let device = MTLCreateSystemDefaultDevice() else { throw TestSkip.noDevice }
+        let device = try #require(MTLCreateSystemDefaultDevice())
         let parsed = ParsedPhosphorSource(source: shader.source)
         let compileErrors = ShaderCompiler.compile(parsed: parsed, device: device).diagnostics.filter { diagnostic in
             if case .compile = diagnostic { return true }
@@ -248,10 +248,10 @@ struct ShadertoyTranslatorTests {
         #expect(compileErrors.isEmpty, "\(shader.name): \(compileErrors)")
     }
 
-    @Test("A translated shader that samples a channel compiles")
+    @Test("A translated shader that samples a channel compiles", .enabled(if: metalDeviceAvailable))
     @MainActor
     func translatedChannelShaderCompiles() throws {
-        guard let device = MTLCreateSystemDefaultDevice() else { throw TestSkip.noDevice }
+        let device = try #require(MTLCreateSystemDefaultDevice())
         let source = """
         void mainImage(out vec4 fragColor, in vec2 fragCoord)
         {
@@ -384,10 +384,10 @@ struct ShadertoyMultiPassTests {
 
     // MARK: End to end
 
-    @Test("A two-pass translation parses and compiles")
+    @Test("A two-pass translation parses and compiles", .enabled(if: metalDeviceAvailable))
     @MainActor
     func multiPassCompiles() throws {
-        guard let device = MTLCreateSystemDefaultDevice() else { throw TestSkip.noDevice }
+        let device = try #require(MTLCreateSystemDefaultDevice())
         let parsed = ParsedPhosphorSource(source: Self.twoPass)
         #expect(parsed.configuration.passes.map(\.id.raw) == ["bufferA", "image"])
         // Translation notes ride along as frontMatterParse diagnostics, so

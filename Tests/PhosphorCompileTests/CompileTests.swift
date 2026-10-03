@@ -4,15 +4,13 @@ import Metal
 import PhosphorModel
 import Testing
 
-@Suite("Compile against MTLDevice")
+@Suite("Compile against MTLDevice", .enabled(if: metalDeviceAvailable))
 struct CompileTests {
     /// Headless trivial kernel exercising the new Texture model:
     /// one output binding (access = .write), one pass.
     @Test("Trivial single-pass kernel compiles into a live MTLLibrary")
     func trivialSinglePass() throws {
-        guard let device = MTLCreateSystemDefaultDevice() else {
-            throw TestSkip.noDevice
-        }
+        let device = try #require(MTLCreateSystemDefaultDevice())
         let config = PhosphorConfiguration(
             textures: [Texture(id: "image")],
             passes: [
@@ -41,9 +39,7 @@ struct CompileTests {
 
     @Test("Multi-pass kernels with shared textures + user uniforms compile")
     func multiPass() throws {
-        guard let device = MTLCreateSystemDefaultDevice() else {
-            throw TestSkip.noDevice
-        }
+        let device = try #require(MTLCreateSystemDefaultDevice())
         let config = PhosphorConfiguration(
             textures: [
                 Texture(id: "bufA", swap: .endOfFrame),

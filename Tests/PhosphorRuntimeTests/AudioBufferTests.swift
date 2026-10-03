@@ -4,12 +4,11 @@ import Testing
 
 /// #3: a frame's audio buffers must not be rewritten while later frames are
 /// prepared, since that frame may still be reading them on the GPU.
-@Suite("Audio buffers")
+@Suite("Audio buffers", .enabled(if: metalDeviceAvailable))
 struct AudioBufferTests {
     @Test("Next frame's write leaves the previous frame's buffers untouched")
     @MainActor
-    func previousFrameUntouched() throws {
-        guard MTLCreateSystemDefaultDevice() != nil else { throw TestSkip.noDevice }
+    func previousFrameUntouched() {
         let runtime = PhosphorRuntime()
 
         runtime.writeAudioBuffers()

@@ -7,12 +7,12 @@ import Testing
 
 /// #5: steady-state frames reuse a fixed pool of residency sets instead of
 /// creating one per frame.
-@Suite("Residency set reuse")
+@Suite("Residency set reuse", .enabled(if: metal4Available))
 struct ResidencyReuseTests {
     @Test("Residency sets created stay bounded across many frames")
     @MainActor
     func boundedCreation() throws {
-        guard let device = MTLCreateSystemDefaultDevice() else { throw TestSkip.noDevice }
+        let device = try #require(MTLCreateSystemDefaultDevice())
         let url = RenderSmokeTests.examplesDirectory.appendingPathComponent("Checkerboard.metal")
         let parsed = ParsedPhosphorSource(source: try String(contentsOf: url, encoding: .utf8))
         let runtime = PhosphorRuntime(configuration: parsed.configuration, source: parsed.body)

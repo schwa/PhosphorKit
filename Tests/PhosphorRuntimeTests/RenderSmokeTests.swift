@@ -34,12 +34,10 @@ struct RenderSmokeTests {
         #expect(!Self.exampleNames.isEmpty)
     }
 
-    @Test("Every shipped example renders one frame without throwing", arguments: exampleNames)
+    @Test("Every shipped example renders one frame without throwing", .enabled(if: metal4Available), arguments: exampleNames)
     @MainActor
     func renderOneFrame(name: String) throws {
-        guard let device = MTLCreateSystemDefaultDevice() else {
-            throw TestSkip.noDevice
-        }
+        let device = try #require(MTLCreateSystemDefaultDevice())
 
         let url = Self.examplesDirectory.appendingPathComponent("\(name).metal")
         let source = try String(contentsOf: url, encoding: .utf8)

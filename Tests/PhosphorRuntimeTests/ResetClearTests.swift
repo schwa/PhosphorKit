@@ -7,12 +7,12 @@ import Testing
 
 /// `signalReset()` must leave ping-pong textures zeroed by the next frame (#6
 /// moved the clear onto the frame's command buffer).
-@Suite("Reset clears ping-pong textures")
+@Suite("Reset clears ping-pong textures", .enabled(if: metal4Available))
 struct ResetClearTests {
     @Test("Ping-pong textures read back zero after reset + one frame")
     @MainActor
     func resetZeroes() throws {
-        guard let device = MTLCreateSystemDefaultDevice() else { throw TestSkip.noDevice }
+        let device = try #require(MTLCreateSystemDefaultDevice())
         let url = RenderSmokeTests.examplesDirectory.appendingPathComponent("Bloom.metal")
         let parsed = ParsedPhosphorSource(source: try String(contentsOf: url, encoding: .utf8))
         var configuration = parsed.configuration

@@ -8,25 +8,20 @@ import Testing
 /// Covers the scheduling flag behind `Pass.once` (#104): one-shot passes run
 /// on the first frame after their state is invalidated, and are skipped
 /// otherwise.
-@Suite("One-shot passes")
+@Suite("One-shot passes", .enabled(if: metalDeviceAvailable))
 struct OneShotPassTests {
-    private func makeRuntime() throws -> PhosphorRuntime {
-        guard MTLCreateSystemDefaultDevice() != nil else { throw TestSkip.noDevice }
-        return PhosphorRuntime()
-    }
-
     @Test("Pending on a fresh runtime, then consumed")
     @MainActor
-    func pendingAtInit() throws {
-        let runtime = try makeRuntime()
+    func pendingAtInit() {
+        let runtime = PhosphorRuntime()
         #expect(runtime.consumeOneShotPasses())
         #expect(!runtime.consumeOneShotPasses())
     }
 
     @Test("A reset re-arms them")
     @MainActor
-    func resetRearms() throws {
-        let runtime = try makeRuntime()
+    func resetRearms() {
+        let runtime = PhosphorRuntime()
         _ = runtime.consumeOneShotPasses()
         runtime.signalReset()
         #expect(runtime.consumeOneShotPasses())
@@ -35,8 +30,8 @@ struct OneShotPassTests {
 
     @Test("A reload re-arms them")
     @MainActor
-    func reloadRearms() throws {
-        let runtime = try makeRuntime()
+    func reloadRearms() {
+        let runtime = PhosphorRuntime()
         _ = runtime.consumeOneShotPasses()
         runtime.update(parsed: ParsedPhosphorSource(source: "kernel void image() {}\n"))
         #expect(runtime.consumeOneShotPasses())
@@ -47,7 +42,7 @@ struct OneShotPassTests {
     @Test("Allocating a texture re-arms them")
     @MainActor
     func allocationRearms() throws {
-        let runtime = try makeRuntime()
+        let runtime = PhosphorRuntime()
         let source = """
         /* phosphor:environment
         output = "image"
@@ -79,7 +74,7 @@ struct OneShotPassTests {
 /// The `seed` pass writes the current time into a 1×1 store; `image` copies
 /// the store to the output. If `once` were ignored, the store would track time
 /// on every frame instead of holding the first frame's value.
-@Suite("One-shot passes end to end")
+@Suite("One-shot passes end to end", .enabled(if: metal4Available))
 struct OneShotPassRenderTests {
     static func source(once: Bool) -> String {
         """
@@ -128,7 +123,7 @@ struct OneShotPassRenderTests {
     /// after the last one.
     @MainActor
     static func redAfterThreeFrames(once: Bool) throws -> Float {
-        guard let device = MTLCreateSystemDefaultDevice() else { throw TestSkip.noDevice }
+        let device = try #require(MTLCreateSystemDefaultDevice())
         let parsed = ParsedPhosphorSource(source: source(once: once))
         #expect(parsed.diagnostics.isEmpty, "validation: \(parsed.diagnostics)")
 

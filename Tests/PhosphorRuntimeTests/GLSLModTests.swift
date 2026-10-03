@@ -9,13 +9,13 @@ import Testing
 /// GLSL's definition rather than being an alias for `fmod()`: the two agree
 /// for non-negative arguments and disagree for negative ones, so the
 /// interesting cases are all below zero.
-@Suite("GLSL mod()")
+@Suite("GLSL mod()", .enabled(if: metal4Available))
 struct GLSLModTests {
     /// Runs a one-pixel shader whose body must assign `float4 result`, and
     /// returns the value it wrote.
     @MainActor
     static func evaluate(_ body: String) throws -> SIMD4<Float> {
-        guard let device = MTLCreateSystemDefaultDevice() else { throw TestSkip.noDevice }
+        let device = try #require(MTLCreateSystemDefaultDevice())
         let source = """
         /* phosphor:environment
         output = "image"
