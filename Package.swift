@@ -23,7 +23,7 @@ let package = Package(
             name: "PhosphorModel",
             resources: [
                 .copy("Resources/BuiltinTextures"),
-                .copy("Resources/StarterTemplate.metal")
+                .copy("Resources/StarterTemplate.metal.template")
             ],
             swiftSettings: [
                 .enableUpcomingFeature("ApproachableConcurrency")

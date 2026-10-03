@@ -308,7 +308,7 @@ public final class PhosphorRenderer {
         encoder.setComputePipelineState(state)
 
         // Generated kernels bind `uniforms` at buffer(0) and `userUniforms` at
-        // buffer(1) by convention (see StarterTemplate.metal / Phosphor.h).
+        // buffer(1) by convention (see StarterTemplate.metal.template / Phosphor.h).
         let tableDescriptor = MTL4ArgumentTableDescriptor()
         tableDescriptor.maxBufferBindCount = 2
         tableDescriptor.initializeBindings = true
