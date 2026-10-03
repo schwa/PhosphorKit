@@ -289,7 +289,16 @@ public final class PhosphorRuntime {
         }
     }
 
+    /// Allocates fresh buffers each frame so earlier in-flight frames keep
+    /// reading their own data.
     public func writeAudioBuffers() {
+        if let waveform = device.makeBuffer(length: waveformBuffer.length, options: .storageModeShared),
+           let spectrum = device.makeBuffer(length: spectrumBuffer.length, options: .storageModeShared) {
+            waveform.label = "Phosphor.AudioWaveform"
+            spectrum.label = "Phosphor.AudioSpectrum"
+            waveformBuffer = waveform
+            spectrumBuffer = spectrum
+        }
         let waveformPtr = waveformBuffer.contents().bindMemory(to: Float.self, capacity: Self.waveformSampleCount)
         let spectrumPtr = spectrumBuffer.contents().bindMemory(to: Float.self, capacity: Self.spectrumBinCount)
         if let capture = audioCapture, capture.isRunningNonisolated {

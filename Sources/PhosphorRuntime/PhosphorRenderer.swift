@@ -88,21 +88,19 @@ public final class PhosphorRenderer {
         // the Uniforms argument buffer. Metal 4 does not infer this. Split into
         // stable resources (same objects every frame -> persistent set) and
         // dynamic ones (drawable + fresh per-frame uniform buffers).
-        var stableAllocations: [MTLAllocation] = [
-            runtime.waveformBuffer,
-            runtime.spectrumBuffer,
-            runtime.fallbackTexture
-        ]
+        var stableAllocations: [MTLAllocation] = [runtime.fallbackTexture]
         for (_, pair) in runtime.textures {
             stableAllocations.append(pair.a)
             if pair.pingPong { stableAllocations.append(pair.b) }
         }
         // Per-frame resources: the drawable (a fresh texture most frames, the
-        // layer does not recycle a small pool here) and the user-uniforms
-        // buffer (reallocated every frame to dodge in-flight write races).
+        // layer does not recycle a small pool here) plus the user-uniforms and
+        // audio buffers (reallocated every frame to dodge in-flight write races).
         var dynamicAllocations: [MTLAllocation] = [
             targetTexture,
-            runtime.userUniformsBuffer
+            runtime.userUniformsBuffer,
+            runtime.waveformBuffer,
+            runtime.spectrumBuffer
         ]
 
         let encodedPasses = runtime.configuration.passes.filter { $0.enabled && (!$0.once || runOneShotPasses) }

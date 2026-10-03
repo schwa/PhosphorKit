@@ -41,15 +41,18 @@ MTL4 command buffers do not retain resources. With up to 3 frames in flight, the
 ## 3: Audio buffers overwritten by CPU while in-flight frames read them
 
 +++
-status: open
+status: closed
 priority: medium
 kind: bug
 labels: metal4, effort:s
 created: 2026-10-02T21:23:47Z
-updated: 2026-10-03T15:16:04Z
+updated: 2026-10-03T15:19:03Z
+closed: 2026-10-03T15:19:03Z
 +++
 
 waveformBuffer and spectrumBuffer are single shared buffers. writeAudioBuffers() rewrites them every frame while up to 2 earlier frames may still be reading them on the GPU, so a frame can see torn or later audio data.
+
+- `2026-10-03T15:19:03Z`: writeAudioBuffers now allocates fresh waveform/spectrum buffers each frame; they moved to the per-frame residency set (kept alive by residencyRing).
 
 ---
 
