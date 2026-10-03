@@ -53,15 +53,18 @@ waveformBuffer and spectrumBuffer are single shared buffers. writeAudioBuffers()
 ## 4: No ordering between consecutive frames on the MTL4 queue
 
 +++
-status: open
+status: closed
 priority: high
 kind: bug
 labels: metal4, effort:s
 created: 2026-10-02T21:23:47Z
-updated: 2026-10-03T15:16:04Z
+updated: 2026-10-03T15:17:27Z
+closed: 2026-10-03T15:17:27Z
 +++
 
 Barriers in PhosphorRenderer only order work inside one frame. Frame N+1's compute passes write ping-pong textures that frame N's compute or billboard may still read. MTL4 does not serialize command buffers by commit order, so feedback shaders can read stale or partly written data. No queue barrier exists at frame start.
+
+- `2026-10-03T15:17:27Z`: Added queue barrier at start of each frame's compute encoder (after dispatch/vertex/fragment, before dispatch). No regression test: the race is GPU-timing dependent and not reproducible deterministically in a unit test.
 
 ---
 

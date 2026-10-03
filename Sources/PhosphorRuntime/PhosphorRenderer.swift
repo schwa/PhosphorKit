@@ -108,6 +108,10 @@ public final class PhosphorRenderer {
         let encodedPasses = runtime.configuration.passes.filter { $0.enabled && (!$0.once || runOneShotPasses) }
 
         if let encoder = commandBuffer.makeComputeCommandEncoder() {
+            // MTL4 doesn't serialize command buffers. Wait for the previous
+            // frame's compute and billboard work before touching the shared
+            // ping-pong textures.
+            encoder.barrier(afterQueueStages: [.dispatch, .vertex, .fragment], beforeStages: .dispatch, visibilityOptions: .device)
             for (passIndex, pass) in encodedPasses.enumerated() {
                 if let passBuffer = runtime.passUniformsBuffer(for: pass.id) {
                     dynamicAllocations.append(passBuffer)
