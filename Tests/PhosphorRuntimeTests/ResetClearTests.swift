@@ -40,7 +40,8 @@ struct ResetClearTests {
         }
 
         try renderFrame()
-        let pair = try #require(runtime.textures.values.first(where: \.pingPong))
+        // swiftlint:disable:next prefer_key_path
+        let pair = try #require(runtime.textures.values.first { $0.pingPong })
         let textures = [pair.a, pair.b]
         let bytesPerPixel = try #require(PhosphorPixelFormat(pair.a.pixelFormat)).bytesPerPixel
         let bytesPerRow = pair.a.width * bytesPerPixel
